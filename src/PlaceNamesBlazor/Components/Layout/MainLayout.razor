@@ -6,6 +6,7 @@
 @inject NavigationManager Navigation
 @inject ICurrentLocaleService LocaleService
 @inject IStringLocalizer<SharedResource> Loc
+@inject IJSRuntime JS
 
 <div class="layout">
     <header>
@@ -40,7 +41,7 @@
                         @if (_currentUser != null)
                         {
                             <li class="nav-item"><a class="nav-link" href="@GetPath("profile")">@Loc["Nav_Profile"]</a></li>
-                            <li class="nav-item"><a class="nav-link" href="@GetPath("Account/Logout")" @onclick="DoLogout" @onclick:preventDefault>@Loc["Nav_LogOut"]</a></li>
+                            <li class="nav-item"><a class="nav-link" href="@_logoutHref" @onclick="DoLogout" @onclick:preventDefault>@Loc["Nav_LogOut"]</a></li>
                         }
                         else
                         {
@@ -70,6 +71,7 @@
     private PlaceNamesBlazor.Contracts.Auth.AuthResultDto? _currentUser;
     private bool _isAdminOrSuperuser;
     private string _currentLocale = "no";
+    private string _logoutHref = "/no/Account/Logout";
 
     private string GetPath(string relativePath)
     {
@@ -89,9 +91,10 @@
         return "/" + targetLocale;
     }
 
-    private void DoLogout()
+    private async Task DoLogout()
     {
-        Navigation.NavigateTo(GetPath("Account/Logout"), forceLoad: true);
+        var url = GetPath("Account/Logout");
+        await JS.InvokeVoidAsync("eval", $"window.location.href = {System.Text.Json.JsonSerializer.Serialize(url)}");
     }
 
     private void GoToLogin()
@@ -107,6 +110,7 @@
     protected override async Task OnInitializedAsync()
     {
         _currentLocale = LocaleService.GetCurrentLocale();
+        _logoutHref = GetPath("Account/Logout");
         _currentUser = await AuthService.GetCurrentUserAsync();
         _isAdminOrSuperuser = _currentUser?.Role is "admin" or "superuser";
     }
