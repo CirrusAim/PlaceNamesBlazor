@@ -187,11 +187,10 @@ public class RecordService : IRecordService
             foreach (var p in db.Poststeder.Local.Where(p => p.PoststedId != 0 && p.KommuneId.HasValue))
                 poststedByKey[(p.KommuneId!.Value, p.PoststedNavn)] = p;
 
-            int imported = 0;
-            int batchCount = 0;
-            for (int i = 0; i < items.Count; i++)
+            // Build stamp + usage period data; process in batches. Save Stempler+Bruksperioder first so we have IDs, then add Stempelbilder/BruksperioderBilder with explicit IDs (same as manual create) so thumbnails resolve.
+            var toInsert = new List<(int RowIndex, int PoststedId, int StempeltypeId, int? UnderkategoriId, string StempeltekstOppe, string? StempeltekstNede, string? StempeltekstMidt, string? Stempelgravoer, string? DatoFraGravoer, string? DatoFraIntendantur, string? DatoFraOverordnet, string? DatoForInnlevering, string? DatoInnlevertIntendantur, string? Tapsmelding, decimal? Stempeldiameter, decimal? Bokstavhoeyde, string? AndreMaal, string? Stempelfarge, string? Reparasjoner, string? DatoAvtrykkIPm, string? Kommentar, string? ForsteKjente, string? SisteKjente, string? BruksperiodeKommentarer, string? BildePath)>();
+            foreach (var (rowIndex, request) in items)
             {
-                var (rowIndex, request) = items[i];
                 var poststed = (request.Poststed ?? "").Trim();
                 var kommune = (request.Kommune ?? "").Trim();
                 if (string.IsNullOrEmpty(poststed) || string.IsNullOrEmpty(kommune))
@@ -210,53 +209,70 @@ public class RecordService : IRecordService
                     continue;
                 }
                 var stempeltekstOppe = string.IsNullOrEmpty(request.StempeltekstOppe?.Trim()) ? poststed : request.StempeltekstOppe!.Trim();
+                toInsert.Add((rowIndex, poststedObj.PoststedId, request.StempeltypeId, request.UnderkategoriId, stempeltekstOppe,
+                    request.StempeltekstNede?.Trim(), request.StempeltekstMidt?.Trim(), string.IsNullOrWhiteSpace(request.Stempelgravoer) ? null : request.Stempelgravoer.Trim(),
+                    request.DatoFraGravoer, request.DatoFraIntendanturTilOverordnetPostkontor, request.DatoFraOverordnetPostkontor, request.DatoForInnleveringTilOverordnetPostkontor, request.DatoInnlevertIntendantur,
+                    request.Tapsmelding?.Trim(), request.Stempeldiameter, request.Bokstavhoeyde, request.AndreMaal?.Trim(), request.Stempelfarge?.Trim(), request.Reparasjoner?.Trim(), request.DatoAvtrykkIPm?.Trim(), request.Kommentar?.Trim(),
+                    request.ForsteKjente?.Trim(), request.SisteKjente?.Trim(), request.BruksperiodeKommentarer?.Trim(), request.BildePath?.Trim()));
+            }
 
-                var stempel = new Stempel
+            int imported = 0;
+            for (int start = 0; start < toInsert.Count; start += BatchSaveSize)
+            {
+                var batch = toInsert.Skip(start).Take(BatchSaveSize).ToList();
+                var stampAndBp = new List<(Stempel Stempel, Bruksperiode Bruksperiode)>();
+                foreach (var t in batch)
                 {
-                    PoststedId = poststedObj.PoststedId,
-                    StempeltypeId = request.StempeltypeId,
-                    UnderkategoriId = request.UnderkategoriId,
-                    StempeltekstOppe = stempeltekstOppe,
-                    StempeltekstNede = request.StempeltekstNede?.Trim(),
-                    StempeltekstMidt = request.StempeltekstMidt?.Trim(),
-                    Stempelgravoer = string.IsNullOrWhiteSpace(request.Stempelgravoer) ? null : request.Stempelgravoer.Trim(),
-                    DatoFraGravoer = ParseDateOnly(request.DatoFraGravoer),
-                    DatoFraIntendanturTilOverordnetPostkontor = ParseDateOnly(request.DatoFraIntendanturTilOverordnetPostkontor),
-                    DatoFraOverordnetPostkontor = ParseDateOnly(request.DatoFraOverordnetPostkontor),
-                    DatoForInnleveringTilOverordnetPostkontor = ParseDateOnly(request.DatoForInnleveringTilOverordnetPostkontor),
-                    DatoInnlevertIntendantur = ParseDateOnly(request.DatoInnlevertIntendantur),
-                    Tapsmelding = request.Tapsmelding?.Trim(),
-                    Stempeldiameter = request.Stempeldiameter,
-                    Bokstavhoeyde = request.Bokstavhoeyde,
-                    AndreMaal = request.AndreMaal?.Trim(),
-                    Stempelfarge = request.Stempelfarge?.Trim(),
-                    Reparasjoner = request.Reparasjoner?.Trim(),
-                    DatoAvtrykkIPm = request.DatoAvtrykkIPm?.Trim(),
-                    Kommentar = request.Kommentar?.Trim(),
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-                db.Stempler.Add(stempel);
-                batchCount++;
+                    var stempel = new Stempel
+                    {
+                        PoststedId = t.PoststedId,
+                        StempeltypeId = t.StempeltypeId,
+                        UnderkategoriId = t.UnderkategoriId,
+                        StempeltekstOppe = t.StempeltekstOppe,
+                        StempeltekstNede = t.StempeltekstNede,
+                        StempeltekstMidt = t.StempeltekstMidt,
+                        Stempelgravoer = t.Stempelgravoer,
+                        DatoFraGravoer = ParseDateOnly(t.DatoFraGravoer),
+                        DatoFraIntendanturTilOverordnetPostkontor = ParseDateOnly(t.DatoFraIntendantur),
+                        DatoFraOverordnetPostkontor = ParseDateOnly(t.DatoFraOverordnet),
+                        DatoForInnleveringTilOverordnetPostkontor = ParseDateOnly(t.DatoForInnlevering),
+                        DatoInnlevertIntendantur = ParseDateOnly(t.DatoInnlevertIntendantur),
+                        Tapsmelding = t.Tapsmelding,
+                        Stempeldiameter = t.Stempeldiameter,
+                        Bokstavhoeyde = t.Bokstavhoeyde,
+                        AndreMaal = t.AndreMaal,
+                        Stempelfarge = t.Stempelfarge,
+                        Reparasjoner = t.Reparasjoner,
+                        DatoAvtrykkIPm = t.DatoAvtrykkIPm,
+                        Kommentar = t.Kommentar,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    var bruksperiode = new Bruksperiode
+                    {
+                        Stempel = stempel,
+                        DatoFoersteKjenteBruksdato = t.ForsteKjente,
+                        DatoSisteKjenteBruksdato = t.SisteKjente,
+                        Kommentarer = t.BruksperiodeKommentarer,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    db.Stempler.Add(stempel);
+                    db.Bruksperioder.Add(bruksperiode);
+                    stampAndBp.Add((stempel, bruksperiode));
+                }
+                await db.SaveChangesAsync(cancellationToken);
 
-                var bruksperiode = new Bruksperiode
+                for (int j = 0; j < batch.Count; j++)
                 {
-                    Stempel = stempel,
-                    DatoFoersteKjenteBruksdato = request.ForsteKjente?.Trim(),
-                    DatoSisteKjenteBruksdato = request.SisteKjente?.Trim(),
-                    Kommentarer = request.BruksperiodeKommentarer?.Trim(),
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-                db.Bruksperioder.Add(bruksperiode);
-
-                if (!string.IsNullOrWhiteSpace(request.BildePath))
-                {
-                    var path = request.BildePath.Trim();
+                    var t = batch[j];
+                    if (string.IsNullOrWhiteSpace(t.BildePath)) continue;
+                    var (stempel, bruksperiode) = stampAndBp[j];
+                    var path = t.BildePath;
                     var filnavn = Path.GetFileName(path);
                     db.Stempelbilder.Add(new Stempelbilde
                     {
-                        Stempel = stempel,
+                        StempelId = stempel.StempelId,
                         BildePath = path,
                         BildeFilnavn = filnavn,
                         ErPrimær = true,
@@ -264,26 +280,15 @@ public class RecordService : IRecordService
                     });
                     db.BruksperioderBilder.Add(new BruksperiodeBilde
                     {
-                        Bruksperiode = bruksperiode,
+                        BruksperiodeId = bruksperiode.BruksperiodeId,
                         BildePath = path,
                         BildeFilnavn = filnavn,
                         BildeNummer = 1,
                         CreatedAt = DateTime.UtcNow
                     });
                 }
-
-                if (batchCount >= BatchSaveSize)
-                {
-                    await db.SaveChangesAsync(cancellationToken);
-                    imported += batchCount;
-                    batchCount = 0;
-                }
-            }
-
-            if (batchCount > 0)
-            {
                 await db.SaveChangesAsync(cancellationToken);
-                imported += batchCount;
+                imported += batch.Count;
             }
 
             return (imported, errors);
