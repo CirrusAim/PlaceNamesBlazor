@@ -19,9 +19,18 @@ using PlaceNamesBlazor.Services.StampType;
 using PlaceNamesBlazor.Services.Subcategory;
 using PlaceNamesBlazor.Services.UsagePeriod;
 using Microsoft.AspNetCore.Localization;
+using Microsoft.AspNetCore.HttpOverrides;
 
 // App setup: Blazor Server, session, DB (local vs DATABASE_URL), cookie auth, image storage (Local/Cloudflare), hosted schema/admin.
 var builder = WebApplication.CreateBuilder(args);
+
+// So redirects use HTTPS when behind a proxy (e.g. Render) that sends X-Forwarded-Proto.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 builder.WebHost.ConfigureKestrel(options =>
 {
@@ -121,6 +130,8 @@ builder.Services.Configure<RequestLocalizationOptions>(options =>
 builder.Services.AddScoped<ICurrentLocaleService, CurrentLocaleService>();
 
 var app = builder.Build();
+
+app.UseForwardedHeaders();
 
 // First: rewrite /framework/* to /_framework/* so Blazor script loads (fixes 404 when HTML or proxy uses path without leading underscore)
 app.Use(async (context, next) =>
