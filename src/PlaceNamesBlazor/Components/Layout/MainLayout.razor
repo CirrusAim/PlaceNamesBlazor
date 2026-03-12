@@ -44,8 +44,8 @@
                         }
                         else
                         {
-                            <li class="nav-item"><a class="nav-link" href="@GetPath("Account/Login")">@Loc["Nav_LogIn"]</a></li>
-                            <li class="nav-item"><a class="nav-link" href="@GetPath("Account/Register")">@Loc["Nav_Register"]</a></li>
+                            <li class="nav-item"><a class="nav-link" href="@GetPath("Account/Login")" @onclick="() => GoToLogin()" @onclick:preventDefault>@Loc["Nav_LogIn"]</a></li>
+                            <li class="nav-item"><a class="nav-link" href="@GetPath("Account/Register")" @onclick="() => GoToRegister()" @onclick:preventDefault>@Loc["Nav_Register"]</a></li>
                         }
                     </ul>
                 </div>
@@ -92,6 +92,16 @@
     private void DoLogout()
     {
         Navigation.NavigateTo(GetPath("Account/Logout"), forceLoad: true);
+    }
+
+    private void GoToLogin()
+    {
+        Navigation.NavigateTo(GetPath("Account/Login"), forceLoad: true);
+    }
+
+    private void GoToRegister()
+    {
+        Navigation.NavigateTo(GetPath("Account/Register"), forceLoad: true);
     }
 
     protected override async Task OnInitializedAsync()
