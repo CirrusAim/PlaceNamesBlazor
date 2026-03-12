@@ -3,12 +3,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
+# Restore and publish in one step so .NET 10 generates _framework (blazor.web.js); --no-restore can skip it in Docker.
 COPY ["src/PlaceNamesBlazor/PlaceNamesBlazor.csproj", "src/PlaceNamesBlazor/"]
-RUN dotnet restore "src/PlaceNamesBlazor/PlaceNamesBlazor.csproj"
-
 COPY src/PlaceNamesBlazor/ src/PlaceNamesBlazor/
 WORKDIR /src/src/PlaceNamesBlazor
-RUN dotnet publish -c Release -o /app/publish --no-restore
+RUN dotnet publish -c Release -o /app/publish
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime

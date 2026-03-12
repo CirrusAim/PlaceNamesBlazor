@@ -6,6 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
     <RootNamespace>PlaceNamesBlazor</RootNamespace>
+    <!-- Ensures Blazor _framework assets (e.g. blazor.web.js) are included in publish, including Docker builds (.NET 10) -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
   </PropertyGroup>
 
   <ItemGroup>
