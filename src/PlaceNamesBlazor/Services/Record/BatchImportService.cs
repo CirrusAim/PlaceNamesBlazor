@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO.Compression;
 using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
 using PlaceNamesBlazor.Contracts.Dropdowns;
@@ -45,105 +46,127 @@ public class BatchImportService : IBatchImportService
         var fylkeByName = fylker.ToDictionary(f => f.FylkeNavn, StringComparer.OrdinalIgnoreCase);
         var stempeltypeByCode = stempeltyper.ToDictionary(s => s.Hovedstempeltype, StringComparer.OrdinalIgnoreCase);
 
-        // BrowserFileStream (from InputFile) only supports async reads; ClosedXML does sync reads. Copy to MemoryStream first.
+        // Copy to MemoryStream (BrowserFileStream is async-only; ClosedXML needs sync). Then detect ZIP bundle (Excel + images) vs plain Excel.
         await using var memStream = new MemoryStream();
         await excelStream.CopyToAsync(memStream, cancellationToken);
         memStream.Position = 0;
-        using var book = new XLWorkbook(memStream);
-        var sheet = book.Worksheet("Fields");
-        if (sheet == null)
-            return new BatchImportResultDto { Errors = ["Sheet 'Fields' not found."] };
 
-        var used = sheet.RangeUsed();
-        if (used == null)
-            return new BatchImportResultDto { Total = 0, Errors = ["Sheet 'Fields' is empty."] };
+        string? imageBasePath = null;
+        string? extractDir = null;
+        Stream? excelStreamToUse = null;
+        string? excelFilePath = null;
 
-        var header = used.FirstRow();
-        var rows = used.Rows().Skip(1);
-        int colFylke = GetColumn(header, "Fylke");
-        int colStempletype = GetColumn(header, "Stempletype");
-        int colPoststed = GetColumn(header, "Poststed");
-        int colStempeltekst = GetColumn(header, "Stempeltekst");
-        int colKommune = GetColumn(header, "Kommune");
-        int colForste = GetColumn(header, "Første kjente");
-        int colSiste = GetColumn(header, "Siste kjente");
-        int colKommentar = GetColumn(header, "Kommentar");
-        int colBilde = GetColumn(header, "Bilde");
-        int colStempeldiameter = GetColumn(header, "Stempeldiameter");
-        int colBokstavhoeyde = GetColumn(header, "Bokstavhøyde");
-        int colAndreMaal = GetColumn(header, "Andre mål");
-        int colStempelfarge = GetColumn(header, "Stempelfarge");
-        int colTapsmelding = GetColumn(header, "Tapsmelding");
-        int colReparasjoner = GetColumn(header, "Reparasjoner");
-        int colDatoAvtrykkIPm = GetColumn(header, "Dato avtrykk i PM");
-        int colDatoFraGravoer = GetColumn(header, "Dato fra gravør");
-        int colDatoFraIntendantur = GetColumn(header, "Dato fra intendantur");
-        int colDatoFraOverordnet = GetColumn(header, "Dato fra overordnet");
-        int colDatoForInnlevering = GetColumn(header, "Dato for innlevering");
-        int colDatoInnlevertIntendantur = GetColumn(header, "Dato innlevert intendantur");
-
-        if (colKommune <= 0 || colPoststed <= 0)
-            return new BatchImportResultDto { Errors = ["Required columns missing: Poststed, Kommune."] };
-
-        var errors = new List<string>();
-        var batchItems = new List<(int RowIndex, CreateRecordRequest Request)>();
-        int rowIndex = 1;
-
-        foreach (var row in rows)
+        try
         {
-            rowIndex++;
-            try
+            if (TryOpenAsZipBundle(memStream, out var zipExcelPath, out var zipExtractDir))
             {
-                var fylkeName = GetCellString(row, colFylke);
-                if (string.IsNullOrWhiteSpace(fylkeName) || !fylkeByName.TryGetValue(fylkeName.Trim(), out var fylkeItem))
+                imageBasePath = zipExtractDir;
+                extractDir = zipExtractDir;
+                excelFilePath = zipExcelPath;
+            }
+            else
+            {
+                memStream.Position = 0;
+                excelStreamToUse = memStream;
+            }
+
+            using var book = excelFilePath != null
+                ? new XLWorkbook(excelFilePath)
+                : new XLWorkbook(excelStreamToUse!);
+            var sheet = book.Worksheet("Fields");
+            if (sheet == null)
+                return new BatchImportResultDto { Errors = ["Sheet 'Fields' not found."] };
+
+            var used = sheet.RangeUsed();
+            if (used == null)
+                return new BatchImportResultDto { Total = 0, Errors = ["Sheet 'Fields' is empty."] };
+
+            var header = used.FirstRow();
+            var rows = used.Rows().Skip(1);
+            int colFylke = GetColumn(header, "Fylke");
+            int colStempletype = GetColumn(header, "Stempletype");
+            int colPoststed = GetColumn(header, "Poststed");
+            int colStempeltekst = GetColumn(header, "Stempeltekst");
+            int colKommune = GetColumn(header, "Kommune");
+            int colForste = GetColumn(header, "Første kjente");
+            int colSiste = GetColumn(header, "Siste kjente");
+            int colKommentar = GetColumn(header, "Kommentar");
+            int colBilde = GetColumn(header, "Bilde");
+            int colStempeldiameter = GetColumn(header, "Stempeldiameter");
+            int colBokstavhoeyde = GetColumn(header, "Bokstavhøyde");
+            int colAndreMaal = GetColumn(header, "Andre mål");
+            int colStempelfarge = GetColumn(header, "Stempelfarge");
+            int colTapsmelding = GetColumn(header, "Tapsmelding");
+            int colReparasjoner = GetColumn(header, "Reparasjoner");
+            int colDatoAvtrykkIPm = GetColumn(header, "Dato avtrykk i PM");
+            int colDatoFraGravoer = GetColumn(header, "Dato fra gravør");
+            int colDatoFraIntendantur = GetColumn(header, "Dato fra intendantur");
+            int colDatoFraOverordnet = GetColumn(header, "Dato fra overordnet");
+            int colDatoForInnlevering = GetColumn(header, "Dato for innlevering");
+            int colDatoInnlevertIntendantur = GetColumn(header, "Dato innlevert intendantur");
+
+            if (colKommune <= 0 || colPoststed <= 0)
+                return new BatchImportResultDto { Errors = ["Required columns missing: Poststed, Kommune."] };
+
+            var errors = new List<string>();
+            var batchItems = new List<(int RowIndex, CreateRecordRequest Request)>();
+            int rowIndex = 1;
+
+            foreach (var row in rows)
+            {
+                rowIndex++;
+                try
                 {
-                    errors.Add($"Row {rowIndex}: Fylke '{fylkeName}' not found.");
-                    continue;
-                }
-
-                var code = GetCellString(row, colStempletype);
-                if (string.IsNullOrWhiteSpace(code) || !stempeltypeByCode.TryGetValue(code.Trim(), out var stempelItem))
-                {
-                    errors.Add($"Row {rowIndex}: Stempletype '{code}' not found.");
-                    continue;
-                }
-
-                var poststed = GetCellString(row, colPoststed);
-                var kommune = GetCellString(row, colKommune);
-                if (string.IsNullOrWhiteSpace(poststed) || string.IsNullOrWhiteSpace(kommune))
-                {
-                    errors.Add($"Row {rowIndex}: Missing Poststed or Kommune.");
-                    continue;
-                }
-
-                var stempeltekst = GetCellString(row, colStempeltekst);
-                if (string.IsNullOrWhiteSpace(stempeltekst))
-                    stempeltekst = poststed;
-
-                var forste = FormatDate(GetCellValue(row, colForste));
-                var siste = FormatDate(GetCellValue(row, colSiste));
-                var kommentar = GetCellString(row, colKommentar);
-
-                string? bildePath = null;
-                var bildeAbsolutePath = GetCellString(row, colBilde);
-                if (!string.IsNullOrWhiteSpace(bildeAbsolutePath))
-                {
-                    var path = bildeAbsolutePath.Trim();
-                    if (File.Exists(path))
+                    var fylkeName = GetCellString(row, colFylke);
+                    if (string.IsNullOrWhiteSpace(fylkeName) || !fylkeByName.TryGetValue(fylkeName.Trim(), out var fylkeItem))
                     {
-                        try
+                        errors.Add($"Row {rowIndex}: Fylke '{fylkeName}' not found.");
+                        continue;
+                    }
+
+                    var code = GetCellString(row, colStempletype);
+                    if (string.IsNullOrWhiteSpace(code) || !stempeltypeByCode.TryGetValue(code.Trim(), out var stempelItem))
+                    {
+                        errors.Add($"Row {rowIndex}: Stempletype '{code}' not found.");
+                        continue;
+                    }
+
+                    var poststed = GetCellString(row, colPoststed);
+                    var kommune = GetCellString(row, colKommune);
+                    if (string.IsNullOrWhiteSpace(poststed) || string.IsNullOrWhiteSpace(kommune))
+                    {
+                        errors.Add($"Row {rowIndex}: Missing Poststed or Kommune.");
+                        continue;
+                    }
+
+                    var stempeltekst = GetCellString(row, colStempeltekst);
+                    if (string.IsNullOrWhiteSpace(stempeltekst))
+                        stempeltekst = poststed;
+
+                    var forste = FormatDate(GetCellValue(row, colForste));
+                    var siste = FormatDate(GetCellValue(row, colSiste));
+                    var kommentar = GetCellString(row, colKommentar);
+
+                    string? bildePath = null;
+                    var bildeCellValue = GetCellString(row, colBilde);
+                    if (!string.IsNullOrWhiteSpace(bildeCellValue))
+                    {
+                        var path = ResolveImagePath(bildeCellValue.Trim(), imageBasePath);
+                        if (path != null && File.Exists(path))
                         {
-                            await using var fs = File.OpenRead(path);
-                            var fileName = Path.GetFileName(path);
-                            if (!string.IsNullOrEmpty(fileName))
-                                bildePath = await _imageStorage.UploadAsync(fs, fileName, "stamps", cancellationToken);
-                        }
-                        catch (Exception ex)
-                        {
-                            errors.Add($"Row {rowIndex}: Bilde copy failed ({path}): {ex.Message}");
+                            try
+                            {
+                                await using var fs = File.OpenRead(path);
+                                var fileName = Path.GetFileName(path);
+                                if (!string.IsNullOrEmpty(fileName))
+                                    bildePath = await _imageStorage.UploadAsync(fs, fileName, "stamp", cancellationToken);
+                            }
+                            catch (Exception ex)
+                            {
+                                errors.Add($"Row {rowIndex}: Bilde copy failed ({path}): {ex.Message}");
+                            }
                         }
                     }
-                }
 
                 var request = new CreateRecordRequest
                 {
@@ -177,23 +200,97 @@ public class BatchImportService : IBatchImportService
             }
         }
 
-        int totalRows = rowIndex - 1;
-        int imported = 0;
-        if (batchItems.Count > 0)
-        {
-            var (batchImported, batchErrors) = await _recordService.CreateBatchAsync(batchItems, cancellationToken);
-            imported = batchImported;
-            errors.AddRange(batchErrors);
-        }
-        int skipped = totalRows - imported;
+            int totalRows = rowIndex - 1;
+            int imported = 0;
+            if (batchItems.Count > 0)
+            {
+                var (batchImported, batchErrors) = await _recordService.CreateBatchAsync(batchItems, cancellationToken);
+                imported = batchImported;
+                errors.AddRange(batchErrors);
+            }
+            int skipped = totalRows - imported;
 
-        return new BatchImportResultDto
+            return new BatchImportResultDto
+            {
+                Total = totalRows,
+                Imported = imported,
+                Skipped = skipped,
+                Errors = errors.Take(100).ToList()
+            };
+        }
+        finally
         {
-            Total = totalRows,
-            Imported = imported,
-            Skipped = skipped,
-            Errors = errors.Take(100).ToList()
-        };
+            if (!string.IsNullOrEmpty(extractDir) && Directory.Exists(extractDir))
+            {
+                try { Directory.Delete(extractDir, recursive: true); } catch { /* ignore */ }
+            }
+        }
+    }
+
+    /// <summary>If the stream is a ZIP containing a root-level .xlsx and image files, extract and return (excelPath, extractDir). Otherwise false.</summary>
+    private static bool TryOpenAsZipBundle(Stream stream, out string? excelPath, out string? extractDir)
+    {
+        excelPath = null;
+        extractDir = null;
+        try
+        {
+            stream.Position = 0;
+            using var zip = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+            var entries = zip.Entries;
+            ZipArchiveEntry? xlsxEntry = null;
+            var hasImage = false;
+            foreach (var e in entries)
+            {
+                var name = e.FullName.Replace('\\', '/').TrimEnd('/');
+                if (string.IsNullOrEmpty(name)) continue;
+                if (name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) && !name.Contains('/'))
+                {
+                    xlsxEntry = e;
+                    continue;
+                }
+                var ext = Path.GetExtension(name);
+                if (ext.Length > 0 && (ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) || ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+                    ext.Equals(".png", StringComparison.OrdinalIgnoreCase) || ext.Equals(".gif", StringComparison.OrdinalIgnoreCase) || ext.Equals(".webp", StringComparison.OrdinalIgnoreCase)))
+                    hasImage = true;
+            }
+            if (xlsxEntry == null || !hasImage)
+            {
+                stream.Position = 0;
+                return false;
+            }
+            var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            zip.ExtractToDirectory(dir);
+            var fullXlsxPath = Path.Combine(dir, xlsxEntry.FullName.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(fullXlsxPath))
+            {
+                Directory.Delete(dir, recursive: true);
+                stream.Position = 0;
+                return false;
+            }
+            excelPath = fullXlsxPath;
+            extractDir = dir;
+            return true;
+        }
+        catch
+        {
+            stream.Position = 0;
+            return false;
+        }
+    }
+
+    /// <summary>Resolve Bilde column: if imageBasePath is set, treat value as relative path; otherwise absolute. Returns null if path would escape base (security).</summary>
+    private static string? ResolveImagePath(string bildeCellValue, string? imageBasePath)
+    {
+        if (string.IsNullOrWhiteSpace(bildeCellValue)) return null;
+        if (string.IsNullOrEmpty(imageBasePath))
+            return bildeCellValue;
+        var combined = Path.Combine(imageBasePath, bildeCellValue.Replace('/', Path.DirectorySeparatorChar));
+        var full = Path.GetFullPath(combined);
+        var baseFull = Path.GetFullPath(imageBasePath).TrimEnd(Path.DirectorySeparatorChar);
+        if (!full.StartsWith(baseFull + Path.DirectorySeparatorChar, StringComparison.Ordinal) && full != baseFull)
+            return null;
+        return full;
     }
 
     private static int GetColumn(IXLRangeRow header, string name)
