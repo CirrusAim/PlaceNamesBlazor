@@ -1432,6 +1432,15 @@
             _batchResult = await BatchImportService.ProcessExcelAsync(stream);
             _batchFile = null;
         }
+        catch (Exception ex)
+        {
+            _batchResult = new BatchImportResultDto
+            {
+                Imported = 0,
+                Skipped = 0,
+                Errors = new List<string> { "Import failed: " + ex.Message }
+            };
+        }
         finally
         {
             _batchImporting = false;

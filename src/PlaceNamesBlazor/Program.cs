@@ -39,6 +39,10 @@ builder.WebHost.ConfigureKestrel(options =>
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+builder.Services.Configure<Microsoft.AspNetCore.Components.Server.CircuitOptions>(options =>
+{
+    options.DetailedErrors = builder.Environment.IsDevelopment();
+});
 builder.Services.AddRazorPages();
 
 builder.Services.AddHttpContextAccessor();
