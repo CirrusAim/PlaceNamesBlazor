@@ -711,9 +711,13 @@
                 <hr class="my-3" />
                 <h6 class="mb-2">@Loc["Admin_BatchImport"]</h6>
                 <p class="small text-muted">@Loc["Admin_BatchImportHelp"]</p>
-                <div class="d-flex align-items-center gap-2 mb-2">
-                    <InputFile Accept=".xlsx,.zip" OnChange="OnBatchFileSelected" class="form-control form-control-sm" style="max-width: 280px;" />
-                    <button type="button" class="btn btn-secondary btn-sm" @onclick="RunBatchImport" disabled="@(_batchFile == null || _batchImporting)">@(_batchImporting ? Loc["Common_Importing"] : Loc["Common_Import"])</button>
+                <div class="mb-2">
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <InputFile Accept=".xlsx,.zip" OnChange="OnBatchFileSelected" class="form-control form-control-sm" style="max-width: 280px;" />
+                        <button type="button" class="btn btn-secondary btn-sm" @onclick="RunBatchImport" disabled="@(_batchFile == null || _batchImporting)">@(_batchImporting ? Loc["Common_Importing"] : Loc["Common_Import"])</button>
+                    </div>
+                    <p class="small text-muted mb-0">@Loc["Admin_BatchImportImagesHelp"]</p>
+                    <InputFile Accept=".jpg,.jpeg,.png,.gif,.webp" Multiple OnChange="OnBatchImageFilesSelected" class="form-control form-control-sm mt-1" style="max-width: 320px;" />
                 </div>
                 @if (_batchResult != null)
                 {
@@ -957,6 +961,7 @@
     private int? _recordToDeleteStempelId;
     private bool _showBulkDeleteConfirm;
     private IBrowserFile? _batchFile;
+    private IReadOnlyList<IBrowserFile> _batchImageFiles = Array.Empty<IBrowserFile>();
     private bool _batchImporting;
     private BatchImportResultDto? _batchResult;
     private List<SubcategoryDto> _subcategoriesList = new();
@@ -1421,6 +1426,12 @@
         _batchResult = null;
     }
 
+    private void OnBatchImageFilesSelected(InputFileChangeEventArgs e)
+    {
+        _batchImageFiles = e.GetMultipleFiles(100);
+        _batchResult = null;
+    }
+
     private async Task RunBatchImport()
     {
         if (_batchFile == null) return;
@@ -1429,8 +1440,27 @@
         try
         {
             await using var stream = _batchFile.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024);
-            _batchResult = await BatchImportService.ProcessExcelAsync(stream);
+            List<(string FileName, byte[] Content)>? imageList = null;
+            if (_batchImageFiles.Count > 0)
+            {
+                imageList = new List<(string, byte[])>();
+                foreach (var f in _batchImageFiles)
+                {
+                    try
+                    {
+                        await using var ms = new MemoryStream();
+                        await f.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).CopyToAsync(ms);
+                        imageList.Add((f.Name, ms.ToArray()));
+                    }
+                    catch
+                    {
+                        // Skip too large or unreadable file
+                    }
+                }
+            }
+            _batchResult = await BatchImportService.ProcessExcelAsync(stream, imageList);
             _batchFile = null;
+            _batchImageFiles = Array.Empty<IBrowserFile>();
         }
         finally
         {

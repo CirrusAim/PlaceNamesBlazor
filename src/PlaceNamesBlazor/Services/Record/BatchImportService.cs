@@ -22,7 +22,7 @@ public class BatchImportService : IBatchImportService
         _imageStorage = imageStorage;
     }
 
-    public async Task<BatchImportResultDto> ProcessExcelAsync(Stream excelStream, CancellationToken cancellationToken = default)
+    public async Task<BatchImportResultDto> ProcessExcelAsync(Stream excelStream, IReadOnlyList<(string FileName, byte[] Content)>? uploadedImages = null, CancellationToken cancellationToken = default)
     {
         // Use a dedicated context for dropdown data so we never share the scoped DbContext with the UI (avoids "second operation" errors).
         List<FylkeItemDto> fylker;
@@ -46,11 +46,13 @@ public class BatchImportService : IBatchImportService
         var fylkeByName = fylker.ToDictionary(f => f.FylkeNavn, StringComparer.OrdinalIgnoreCase);
         var stempeltypeByCode = stempeltyper.ToDictionary(s => s.Hovedstempeltype, StringComparer.OrdinalIgnoreCase);
 
-        // Copy to MemoryStream (BrowserFileStream is async-only; ClosedXML needs sync). Then detect ZIP bundle (Excel + images) vs plain Excel.
+        // Copy to MemoryStream (BrowserFileStream is async-only; ClosedXML needs sync).
         await using var memStream = new MemoryStream();
         await excelStream.CopyToAsync(memStream, cancellationToken);
         memStream.Position = 0;
 
+        // When user uploads image files (e.g. on Render), we match Bilde column by filename and upload those bytes. Otherwise try ZIP bundle or absolute path (local).
+        var imageByFileName = BuildImageLookup(uploadedImages);
         string? imageBasePath = null;
         string? extractDir = null;
         Stream? excelStreamToUse = null;
@@ -58,7 +60,7 @@ public class BatchImportService : IBatchImportService
 
         try
         {
-            if (TryOpenAsZipBundle(memStream, out var zipExcelPath, out var zipExtractDir))
+            if (imageByFileName == null && TryOpenAsZipBundle(memStream, out var zipExcelPath, out var zipExtractDir))
             {
                 imageBasePath = zipExtractDir;
                 extractDir = zipExtractDir;
@@ -151,19 +153,40 @@ public class BatchImportService : IBatchImportService
                     var bildeCellValue = GetCellString(row, colBilde);
                     if (!string.IsNullOrWhiteSpace(bildeCellValue))
                     {
-                        var path = ResolveImagePath(bildeCellValue.Trim(), imageBasePath);
-                        if (path != null && File.Exists(path))
+                        var trimmed = bildeCellValue.Trim();
+                        if (imageByFileName != null)
                         {
-                            try
+                            // Uploaded images provided (e.g. on Render): match by filename from Bilde column (path can be C:\...\stamp1.jpg).
+                            var fileName = Path.GetFileName(trimmed);
+                            if (!string.IsNullOrEmpty(fileName) && imageByFileName.TryGetValue(fileName, out var content))
                             {
-                                await using var fs = File.OpenRead(path);
-                                var fileName = Path.GetFileName(path);
-                                if (!string.IsNullOrEmpty(fileName))
-                                    bildePath = await _imageStorage.UploadAsync(fs, fileName, "stamp", cancellationToken);
+                                try
+                                {
+                                    await using var ms = new MemoryStream(content);
+                                    bildePath = await _imageStorage.UploadAsync(ms, fileName, "stamp", cancellationToken);
+                                }
+                                catch (Exception ex)
+                                {
+                                    errors.Add($"Row {rowIndex}: Bilde upload failed ({fileName}): {ex.Message}");
+                                }
                             }
-                            catch (Exception ex)
+                        }
+                        else
+                        {
+                            var path = ResolveImagePath(trimmed, imageBasePath);
+                            if (path != null && File.Exists(path))
                             {
-                                errors.Add($"Row {rowIndex}: Bilde copy failed ({path}): {ex.Message}");
+                                try
+                                {
+                                    await using var fs = File.OpenRead(path);
+                                    var fileName = Path.GetFileName(path);
+                                    if (!string.IsNullOrEmpty(fileName))
+                                        bildePath = await _imageStorage.UploadAsync(fs, fileName, "stamp", cancellationToken);
+                                }
+                                catch (Exception ex)
+                                {
+                                    errors.Add($"Row {rowIndex}: Bilde copy failed ({path}): {ex.Message}");
+                                }
                             }
                         }
                     }
@@ -277,6 +300,20 @@ public class BatchImportService : IBatchImportService
             stream.Position = 0;
             return false;
         }
+    }
+
+    /// <summary>Build filename -> content lookup from uploaded images (case-insensitive filename key). Returns null if list is null or empty.</summary>
+    private static IReadOnlyDictionary<string, byte[]>? BuildImageLookup(IReadOnlyList<(string FileName, byte[] Content)>? uploadedImages)
+    {
+        if (uploadedImages == null || uploadedImages.Count == 0) return null;
+        var dict = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (fileName, content) in uploadedImages)
+        {
+            var name = Path.GetFileName(fileName);
+            if (!string.IsNullOrEmpty(name))
+                dict[name] = content;
+        }
+        return dict;
     }
 
     /// <summary>Resolve Bilde column: if imageBasePath is set, treat value as relative path; otherwise absolute. Returns null if path would escape base (security).</summary>
