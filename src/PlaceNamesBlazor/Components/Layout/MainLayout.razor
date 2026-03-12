@@ -40,7 +40,7 @@
                         @if (_currentUser != null)
                         {
                             <li class="nav-item"><a class="nav-link" href="@GetPath("profile")">@Loc["Nav_Profile"]</a></li>
-                            <li class="nav-item"><a class="nav-link" href="@GetPath("Account/Logout")">@Loc["Nav_LogOut"]</a></li>
+                            <li class="nav-item"><a class="nav-link" href="@GetPath("Account/Logout")" @onclick="DoLogout" @onclick:preventDefault>@Loc["Nav_LogOut"]</a></li>
                         }
                         else
                         {
@@ -87,6 +87,11 @@
         if (path == "/no" || path == "/en")
             return "/" + targetLocale;
         return "/" + targetLocale;
+    }
+
+    private void DoLogout()
+    {
+        Navigation.NavigateTo(GetPath("Account/Logout"), forceLoad: true);
     }
 
     protected override async Task OnInitializedAsync()
