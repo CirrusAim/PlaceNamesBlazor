@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.IO.Compression;
 using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
 using PlaceNamesBlazor.Contracts.Dropdowns;
@@ -51,41 +50,25 @@ public class BatchImportService : IBatchImportService
         await excelStream.CopyToAsync(memStream, cancellationToken);
         memStream.Position = 0;
 
-        // When user uploads image files (e.g. on Render), we match Bilde column by filename and upload those bytes. Otherwise try ZIP bundle or absolute path (local).
+        // Match Bilde column by filename against uploaded image files (same approach as profile/report images).
         var imageByFileName = BuildImageLookup(uploadedImages);
-        string? imageBasePath = null;
-        string? extractDir = null;
-        Stream? excelStreamToUse = null;
-        string? excelFilePath = null;
 
-        try
-        {
-            if (imageByFileName == null && TryOpenAsZipBundle(memStream, out var zipExcelPath, out var zipExtractDir))
-            {
-                imageBasePath = zipExtractDir;
-                extractDir = zipExtractDir;
-                excelFilePath = zipExcelPath;
-            }
-            else
-            {
-                memStream.Position = 0;
-                excelStreamToUse = memStream;
-            }
+        memStream.Position = 0;
+        using var book = new XLWorkbook(memStream);
+        var sheet = book.Worksheet("Fields");
+        if (sheet == null)
+            return new BatchImportResultDto { Errors = ["Sheet 'Fields' not found."] };
 
-            using var book = excelFilePath != null
-                ? new XLWorkbook(excelFilePath)
-                : new XLWorkbook(excelStreamToUse!);
-            var sheet = book.Worksheet("Fields");
-            if (sheet == null)
-                return new BatchImportResultDto { Errors = ["Sheet 'Fields' not found."] };
+        var used = sheet.RangeUsed();
+        if (used == null)
+            return new BatchImportResultDto { Total = 0, Errors = ["Sheet 'Fields' is empty."] };
 
-            var used = sheet.RangeUsed();
-            if (used == null)
-                return new BatchImportResultDto { Total = 0, Errors = ["Sheet 'Fields' is empty."] };
+        var header = used.FirstRow();
+        if (header == null)
+            return new BatchImportResultDto { Errors = ["Sheet 'Fields' has no header row."] };
 
-            var header = used.FirstRow();
-            var rows = used.Rows().Skip(1);
-            int colFylke = GetColumn(header, "Fylke");
+        var rows = used.Rows().Skip(1);
+        int colFylke = GetColumn(header, "Fylke");
             int colStempletype = GetColumn(header, "Stempletype");
             int colPoststed = GetColumn(header, "Poststed");
             int colStempeltekst = GetColumn(header, "Stempeltekst");
@@ -117,6 +100,7 @@ public class BatchImportService : IBatchImportService
             foreach (var row in rows)
             {
                 rowIndex++;
+                if (row == null) continue;
                 try
                 {
                     var fylkeName = GetCellString(row, colFylke);
@@ -154,39 +138,18 @@ public class BatchImportService : IBatchImportService
                     if (!string.IsNullOrWhiteSpace(bildeCellValue))
                     {
                         var trimmed = bildeCellValue.Trim();
-                        if (imageByFileName != null)
+                        // Match by filename from Bilde column (e.g. stamp1.jpg or path ending in filename).
+                        var fileName = Path.GetFileName(trimmed);
+                        if (!string.IsNullOrEmpty(fileName) && imageByFileName != null && imageByFileName.TryGetValue(fileName, out var content))
                         {
-                            // Uploaded images provided (e.g. on Render): match by filename from Bilde column (path can be C:\...\stamp1.jpg).
-                            var fileName = Path.GetFileName(trimmed);
-                            if (!string.IsNullOrEmpty(fileName) && imageByFileName.TryGetValue(fileName, out var content))
+                            try
                             {
-                                try
-                                {
-                                    await using var ms = new MemoryStream(content);
-                                    bildePath = await _imageStorage.UploadAsync(ms, fileName, "stamp", cancellationToken);
-                                }
-                                catch (Exception ex)
-                                {
-                                    errors.Add($"Row {rowIndex}: Bilde upload failed ({fileName}): {ex.Message}");
-                                }
+                                await using var ms = new MemoryStream(content);
+                                bildePath = await _imageStorage.UploadAsync(ms, fileName, "stamp", cancellationToken);
                             }
-                        }
-                        else
-                        {
-                            var path = ResolveImagePath(trimmed, imageBasePath);
-                            if (path != null && File.Exists(path))
+                            catch (Exception ex)
                             {
-                                try
-                                {
-                                    await using var fs = File.OpenRead(path);
-                                    var fileName = Path.GetFileName(path);
-                                    if (!string.IsNullOrEmpty(fileName))
-                                        bildePath = await _imageStorage.UploadAsync(fs, fileName, "stamp", cancellationToken);
-                                }
-                                catch (Exception ex)
-                                {
-                                    errors.Add($"Row {rowIndex}: Bilde copy failed ({path}): {ex.Message}");
-                                }
+                                errors.Add($"Row {rowIndex}: Bilde upload failed ({fileName}): {ex.Message}");
                             }
                         }
                     }
@@ -240,66 +203,6 @@ public class BatchImportService : IBatchImportService
                 Skipped = skipped,
                 Errors = errors.Take(100).ToList()
             };
-        }
-        finally
-        {
-            if (!string.IsNullOrEmpty(extractDir) && Directory.Exists(extractDir))
-            {
-                try { Directory.Delete(extractDir, recursive: true); } catch { /* ignore */ }
-            }
-        }
-    }
-
-    /// <summary>If the stream is a ZIP containing a root-level .xlsx and image files, extract and return (excelPath, extractDir). Otherwise false.</summary>
-    private static bool TryOpenAsZipBundle(Stream stream, out string? excelPath, out string? extractDir)
-    {
-        excelPath = null;
-        extractDir = null;
-        try
-        {
-            stream.Position = 0;
-            using var zip = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
-            var entries = zip.Entries;
-            ZipArchiveEntry? xlsxEntry = null;
-            var hasImage = false;
-            foreach (var e in entries)
-            {
-                var name = e.FullName.Replace('\\', '/').TrimEnd('/');
-                if (string.IsNullOrEmpty(name)) continue;
-                if (name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) && !name.Contains('/'))
-                {
-                    xlsxEntry = e;
-                    continue;
-                }
-                var ext = Path.GetExtension(name);
-                if (ext.Length > 0 && (ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) || ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
-                    ext.Equals(".png", StringComparison.OrdinalIgnoreCase) || ext.Equals(".gif", StringComparison.OrdinalIgnoreCase) || ext.Equals(".webp", StringComparison.OrdinalIgnoreCase)))
-                    hasImage = true;
-            }
-            if (xlsxEntry == null || !hasImage)
-            {
-                stream.Position = 0;
-                return false;
-            }
-            var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(dir);
-            zip.ExtractToDirectory(dir);
-            var fullXlsxPath = Path.Combine(dir, xlsxEntry.FullName.Replace('/', Path.DirectorySeparatorChar));
-            if (!File.Exists(fullXlsxPath))
-            {
-                Directory.Delete(dir, recursive: true);
-                stream.Position = 0;
-                return false;
-            }
-            excelPath = fullXlsxPath;
-            extractDir = dir;
-            return true;
-        }
-        catch
-        {
-            stream.Position = 0;
-            return false;
-        }
     }
 
     /// <summary>Build filename -> content lookup from uploaded images (case-insensitive filename key). Returns null if list is null or empty.</summary>
@@ -314,20 +217,6 @@ public class BatchImportService : IBatchImportService
                 dict[name] = content;
         }
         return dict;
-    }
-
-    /// <summary>Resolve Bilde column: if imageBasePath is set, treat value as relative path; otherwise absolute. Returns null if path would escape base (security).</summary>
-    private static string? ResolveImagePath(string bildeCellValue, string? imageBasePath)
-    {
-        if (string.IsNullOrWhiteSpace(bildeCellValue)) return null;
-        if (string.IsNullOrEmpty(imageBasePath))
-            return bildeCellValue;
-        var combined = Path.Combine(imageBasePath, bildeCellValue.Replace('/', Path.DirectorySeparatorChar));
-        var full = Path.GetFullPath(combined);
-        var baseFull = Path.GetFullPath(imageBasePath).TrimEnd(Path.DirectorySeparatorChar);
-        if (!full.StartsWith(baseFull + Path.DirectorySeparatorChar, StringComparison.Ordinal) && full != baseFull)
-            return null;
-        return full;
     }
 
     private static int GetColumn(IXLRangeRow header, string name)

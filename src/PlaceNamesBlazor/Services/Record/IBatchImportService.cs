@@ -4,6 +4,6 @@ namespace PlaceNamesBlazor.Services.Record;
 
 public interface IBatchImportService
 {
-    /// <summary>Process Excel stream (sheet "Fields"). If uploadedImages is provided, Bilde column is matched by filename and those bytes are uploaded to storage (for use on Render). Otherwise Bilde is treated as absolute path on server (local only).</summary>
+    /// <summary>Process Excel stream (sheet "Fields"). If uploadedImages is provided, Bilde column is matched by filename and those bytes are uploaded to storage.</summary>
     Task<BatchImportResultDto> ProcessExcelAsync(Stream excelStream, IReadOnlyList<(string FileName, byte[] Content)>? uploadedImages = null, CancellationToken cancellationToken = default);
 }
