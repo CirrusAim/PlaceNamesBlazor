@@ -130,6 +130,17 @@ if (!app.Environment.IsDevelopment())
 app.UseStatusCodePagesWithReExecute("/no/not-found", createScopeForStatusCodePages: true);
 app.UseHttpsRedirection();
 
+// Rewrite /framework/* to /_framework/* (fixes 404 when something requests path without leading underscore, e.g. old Assets resolution or proxy)
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path.Value ?? "";
+    if (path.StartsWith("/framework/", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Request.Path = "/_framework/" + path.Substring("/framework/".Length);
+    }
+    await next(context);
+});
+
 // Route-based locale: redirect root to default locale
 app.Use(async (context, next) =>
 {
