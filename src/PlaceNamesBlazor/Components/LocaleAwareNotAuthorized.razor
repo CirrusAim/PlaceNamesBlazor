@@ -1,0 +1,4 @@
+@inject PlaceNamesBlazor.Services.Locale.ICurrentLocaleService LocaleService
+@inject IStringLocalizer<SharedResource> Loc
+
+<p>@Loc["NotAuthorized_Message"] <a href="/@(LocaleService.GetCurrentLocale())/Account/Login">@Loc["Nav_LogIn"]</a> or <a href="/@(LocaleService.GetCurrentLocale())">@Loc["NotAuthorized_GoHome"]</a>.</p>

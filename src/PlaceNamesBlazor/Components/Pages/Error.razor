@@ -1,0 +1,39 @@
+@page "/{locale:regex(no|en)}/Error"
+@using System.Diagnostics
+@inject IStringLocalizer<SharedResource> Loc
+
+<PageTitle>@Loc["Error_Title"]</PageTitle>
+
+<div class="alert alert-danger" role="alert">
+    <h1 class="alert-heading h4">@Loc["Error_Title"]</h1>
+    <p class="mb-0">@Loc["Error_Message"]</p>
+</div>
+
+@if (ShowRequestId)
+{
+    <p class="text-muted">
+        <strong>@Loc["Error_RequestId"]:</strong> <code>@RequestId</code>
+    </p>
+}
+
+<div class="card border-warning mt-4">
+    <div class="card-body">
+        <h3 class="card-title h5">@Loc["Error_DevelopmentMode"]</h3>
+        <p class="card-text">@Loc["Error_DevelopmentParagraph1"]</p>
+        <p class="card-text mb-0">@Loc["Error_DevelopmentParagraph2"]</p>
+    </div>
+</div>
+
+@code{
+    [Parameter]
+    public string Locale { get; set; } = "no";
+
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+    private bool ShowRequestId => !string.IsNullOrEmpty(RequestId);
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

@@ -1,0 +1,20 @@
+@page "/{locale:regex(no|en)}"
+@rendermode InteractiveServer
+@inject IAuthService AuthService
+@inject NavigationManager Navigation
+
+<PageTitle>Place Names</PageTitle>
+
+@code {
+    [Parameter]
+    public string Locale { get; set; } = "no";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = await AuthService.GetCurrentUserAsync();
+        if (user?.Role is "admin" or "superuser")
+            Navigation.NavigateTo($"/{Locale}/admin", replace: true);
+        else
+            Navigation.NavigateTo($"/{Locale}/search", replace: true);
+    }
+}

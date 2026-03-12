@@ -1,0 +1,169 @@
+@page "/{locale:regex(no|en)}/profile"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using PlaceNamesBlazor.Contracts.Reporter
+@using PlaceNamesBlazor.Services.Auth
+@using PlaceNamesBlazor.Services.Reporter
+@attribute [Authorize]
+@inject IAuthService AuthService
+@inject IReporterService ReporterService
+@inject NavigationManager Navigation
+@inject ICurrentLocaleService LocaleService
+@inject IStringLocalizer<SharedResource> Loc
+
+<PageTitle>@Loc["Profile_Title"]</PageTitle>
+
+<h1 class="page-title mb-4">@Loc["Profile_Title"]</h1>
+
+@if (_user == null)
+{
+    <p>@Loc["Common_Loading"]</p>
+    return;
+}
+
+@if (_success)
+{
+    <div class="alert alert-success">@Loc["Profile_Updated"]</div>
+}
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="alert alert-danger">@_error</div>
+}
+
+<div class="card mb-3" style="max-width: 500px;">
+    <div class="card-header">@Loc["Profile_AccountInfo"]</div>
+    <div class="card-body">
+        <div class="mb-3">
+            <label class="form-label text-muted">@Loc["Profile_FullName"]</label>
+            <div class="form-control-plaintext">@(_user.FullName ?? "—")</div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label text-muted">@Loc["Profile_Role"]</label>
+            <div class="form-control-plaintext">@(_user.Role ?? "—")</div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label text-muted">@Loc["Profile_ReporterStatus"]</label>
+            <div class="form-control-plaintext">
+                @if (_reporter == null)
+                {
+                    <span class="text-muted">@Loc["Profile_NotRequested"]</span>
+                }
+                else if (_reporter.Status == "pending")
+                {
+                    <span class="text-warning">@Loc["Profile_PendingApproval"]</span>
+                }
+                else if (_reporter.Status == "approved")
+                {
+                    <span class="text-success">@Loc["Profile_Approved"]</span> @(string.IsNullOrEmpty(_reporter.Initialer) ? "" : $"({_reporter.Initialer})")
+                }
+                else if (_reporter.Status == "rejected")
+                {
+                    <span class="text-danger">@Loc["Profile_Rejected"]</span>
+                }
+                else
+                {
+                    @_reporter.Status
+                }
+            </div>
+            @if (_user.Role != "admin" && (_reporter == null || _reporter.Status == "rejected"))
+            {
+                <a class="btn btn-outline-primary btn-sm mt-2" href="/@(LocaleService.GetCurrentLocale())/reporter-register">@Loc["Profile_RegisterAsReporter"]</a>
+            }
+            @if (_reporter != null && _reporter.Status == "approved")
+            {
+                <a class="btn btn-outline-secondary btn-sm mt-2" href="/@(LocaleService.GetCurrentLocale())/reporter-register">@Loc["Profile_EditReporterInfo"]</a>
+            }
+        </div>
+    </div>
+</div>
+
+<div class="card" style="max-width: 500px;">
+    <div class="card-header">@Loc["Profile_EditableInfo"]</div>
+    <div class="card-body">
+        <EditForm Model="_profileModel" OnValidSubmit="SaveProfile">
+            <div class="mb-3">
+                <label class="form-label">@Loc["Profile_Email"]</label>
+                <InputText type="email" class="form-control" @bind-Value="_profileModel.Email" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">@Loc["Profile_Telephone"]</label>
+                <InputText class="form-control" @bind-Value="_profileModel.Telephone" />
+            </div>
+            <hr />
+            <p class="small text-muted">@Loc["Profile_PasswordHint"]</p>
+            <div class="mb-3">
+                <label class="form-label">@Loc["Profile_CurrentPassword"]</label>
+                <InputText type="password" class="form-control" @bind-Value="_profileModel.CurrentPassword" autocomplete="current-password" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">@Loc["Profile_NewPassword"]</label>
+                <InputText type="password" class="form-control" @bind-Value="_profileModel.NewPassword" autocomplete="new-password" />
+            </div>
+            <button type="submit" class="btn btn-primary" disabled="@_loading">@(_loading ? Loc["Profile_Saving"] : Loc["Profile_Save"])</button>
+        </EditForm>
+    </div>
+</div>
+
+<p class="mt-3"><a href="/@(LocaleService.GetCurrentLocale())">@Loc["Nav_Home"]</a></p>
+
+@code {
+    [Parameter]
+    public string Locale { get; set; } = "no";
+
+    private sealed class ProfileFormModel
+    {
+        public string Email { get; set; } = "";
+        public string Telephone { get; set; } = "";
+        public string CurrentPassword { get; set; } = "";
+        public string NewPassword { get; set; } = "";
+    }
+
+    private Contracts.Auth.AuthResultDto? _user;
+    private ReporterDto? _reporter;
+    private readonly ProfileFormModel _profileModel = new();
+    private bool _loading;
+    private bool _success;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _user = await AuthService.GetCurrentUserAsync();
+        if (_user != null)
+        {
+            _profileModel.Email = _user.Email ?? "";
+            _profileModel.Telephone = _user.Telephone ?? "";
+            if (_user.UserId > 0)
+                _reporter = await ReporterService.GetByUserIdAsync(_user.UserId);
+        }
+    }
+
+    private async Task SaveProfile()
+    {
+        if (_user == null) return;
+        _error = null;
+        _success = false;
+        _loading = true;
+        try
+        {
+            var (ok, err) = await AuthService.UpdateProfileAsync(
+                _user.UserId,
+                string.IsNullOrWhiteSpace(_profileModel.Email) ? null : _profileModel.Email.Trim(),
+                string.IsNullOrWhiteSpace(_profileModel.Telephone) ? null : _profileModel.Telephone.Trim(),
+                string.IsNullOrEmpty(_profileModel.CurrentPassword) ? null : _profileModel.CurrentPassword,
+                string.IsNullOrEmpty(_profileModel.NewPassword) ? null : _profileModel.NewPassword);
+            if (ok)
+            {
+                _success = true;
+                _profileModel.CurrentPassword = "";
+                _profileModel.NewPassword = "";
+            }
+            else
+                _error = err ?? "Update failed.";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

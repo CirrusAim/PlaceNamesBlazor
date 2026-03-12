@@ -1,0 +1,117 @@
+@page "/{locale:regex(no|en)}/record/{Id:int}"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using PlaceNamesBlazor.Contracts.Search
+@using PlaceNamesBlazor.Services
+@inject IStampSearchService SearchService
+@inject NavigationManager Navigation
+@inject ICurrentLocaleService LocaleService
+@inject IStringLocalizer<SharedResource> Loc
+
+<PageTitle>@Loc["Record_Title"] @_record?.StempeltekstOppe</PageTitle>
+
+<h1 class="page-title mb-4">@Loc["Record_Title"]</h1>
+
+@if (_loading)
+{
+    <p>@Loc["Common_Loading"]</p>
+}
+else if (_record == null)
+{
+    <p class="text-muted">@Loc["Record_NotFound"]</p>
+    <p><a href="/@(LocaleService.GetCurrentLocale())">@Loc["Record_BackToHome"]</a></p>
+}
+else
+{
+    <div class="card mb-3">
+        <div class="card-body">
+            @if (!string.IsNullOrEmpty(_record.ThumbnailUrl))
+            {
+                <p class="mb-3">
+                    <img src="@_record.ThumbnailUrl" alt="Stamp" class="rounded" style="max-width: 200px;" />
+                </p>
+            }
+            <dl class="row mb-0">
+                <dt class="col-sm-3">@Loc["Search_Poststed"]</dt>
+                <dd class="col-sm-9">@_record.PoststedNavn</dd>
+                <dt class="col-sm-3">@Loc["Record_StempeltekstTop"]</dt>
+                <dd class="col-sm-9">@_record.StempeltekstOppe</dd>
+                @if (!string.IsNullOrEmpty(_record.StempeltekstNede))
+                {
+                    <dt class="col-sm-3">@Loc["Record_StempeltekstBottom"]</dt>
+                    <dd class="col-sm-9">@_record.StempeltekstNede</dd>
+                }
+                @if (!string.IsNullOrEmpty(_record.StempeltekstMidt))
+                {
+                    <dt class="col-sm-3">@Loc["Record_StempeltekstMiddle"]</dt>
+                    <dd class="col-sm-9">@_record.StempeltekstMidt</dd>
+                }
+                <dt class="col-sm-3">@Loc["Search_Kommune"]</dt>
+                <dd class="col-sm-9">@(_record.KommuneNavn ?? "—")</dd>
+                <dt class="col-sm-3">@Loc["Search_Fylke"]</dt>
+                <dd class="col-sm-9">@(_record.FylkeNavn ?? "—")</dd>
+                <dt class="col-sm-3">@Loc["Search_Stempeltype"]</dt>
+                <dd class="col-sm-9">@(_record.StempeltypeFullTekst ?? "—")</dd>
+                <dt class="col-sm-3">@Loc["Record_FirstLastKnownRecord"]</dt>
+                <dd class="col-sm-9">@(_record.FirstKnownDate ?? "—") / @(_record.LastKnownDate ?? "—")</dd>
+                @if (!string.IsNullOrEmpty(_record.Kommentar))
+                {
+                    <dt class="col-sm-3">@Loc["Record_Kommentar"]</dt>
+                    <dd class="col-sm-9">@_record.Kommentar</dd>
+                }
+            </dl>
+        </div>
+    </div>
+
+    @if (_record.UsagePeriods.Count > 0)
+    {
+        <h2 class="h5 mb-2">@Loc["Record_UsagePeriods"]</h2>
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered">
+                <thead class="table-light">
+                    <tr>
+                        <th>@Loc["Record_FirstKnown"]</th>
+                        <th>@Loc["Record_LastKnown"]</th>
+                        <th>@Loc["Record_Kommentarer"]</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var up in _record.UsagePeriods)
+                    {
+                        <tr>
+                            <td>@(up.DatoFoersteKjenteBruksdato ?? "—")</td>
+                            <td>@(up.DatoSisteKjenteBruksdato ?? "—")</td>
+                            <td>@(up.Kommentarer ?? "—")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <p class="mt-3">
+        <a href="/@(LocaleService.GetCurrentLocale())">@Loc["Record_BackToHome"]</a>
+        <AuthorizeView Policy="AdminOrSuperuser">
+            <Authorized>
+                | <a href="/@(LocaleService.GetCurrentLocale())/admin/record/edit/@Id">@Loc["Common_Edit"]</a>
+            </Authorized>
+        </AuthorizeView>
+    </p>
+}
+
+@code {
+    [Parameter]
+    public string Locale { get; set; } = "no";
+
+    [Parameter]
+    public int Id { get; set; }
+
+    private RecordDetailDto? _record;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _record = await SearchService.GetByIdAsync(Id);
+        _loading = false;
+    }
+}

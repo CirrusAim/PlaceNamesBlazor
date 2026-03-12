@@ -1,0 +1,471 @@
+@page "/{locale:regex(no|en)}/search"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Web
+@using PlaceNamesBlazor.Contracts.Search
+@using PlaceNamesBlazor.Contracts.Common
+@using PlaceNamesBlazor.Contracts.Dropdowns
+@using PlaceNamesBlazor.Contracts.Reporting
+@using PlaceNamesBlazor.Services.Auth
+@using PlaceNamesBlazor.Services.Reporter
+@using PlaceNamesBlazor.Services.Reporting
+@using PlaceNamesBlazor.Services.ImageStorage
+@inject IDropdownService DropdownService
+@inject IStampSearchService SearchService
+@inject IAuthService AuthService
+@inject IReporterService ReporterService
+@inject IReportingService ReportingService
+@inject IImageStorageService ImageStorage
+@inject ICurrentLocaleService LocaleService
+@inject IStringLocalizer<SharedResource> Loc
+
+<PageTitle>@Loc["Search_Title"]</PageTitle>
+
+<h1 class="page-title mb-4">@Loc["Search_Title"]</h1>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <EditForm Model="_request" OnValidSubmit="DoSearch" FormName="SearchForm">
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Search_Poststed"]</label>
+                    <InputText @bind-Value="_request.Poststed" class="form-control" placeholder="@Loc["Search_Poststed"]" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Search_Stempeltekst"]</label>
+                    <InputText @bind-Value="_request.Stempeltekst" class="form-control" placeholder="@Loc["Search_Stempeltekst"]" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Search_Kommune"]</label>
+                    <InputText @bind-Value="_request.Kommune" class="form-control" placeholder="@Loc["Search_Kommune"]" />
+                </div>
+            </div>
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Search_Fylke"]</label>
+                    <InputSelect @bind-Value="_request.FylkeId" class="form-select">
+                        <option value="">@Loc["Search_All"]</option>
+                        @foreach (var f in _dropdowns.Fylker)
+                        {
+                            <option value="@f.FylkeId">@f.FylkeNavn</option>
+                        }
+                    </InputSelect>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Search_Stempeltype"]</label>
+                    <InputSelect @bind-Value="_request.StempeltypeId" class="form-select">
+                        <option value="">@Loc["Search_All"]</option>
+@foreach (var s in _dropdowns.Stempeltyper)
+                            {
+                                <option value="@s.StempeltypeId">@s.Hovedstempeltype</option>
+                            }
+                    </InputSelect>
+                </div>
+            </div>
+            <div class="d-flex gap-2 align-items-end">
+                <button type="submit" class="btn btn-primary" disabled="@_loading">@(_loading ? Loc["Search_Searching"] : Loc["Search_Button"])</button>
+                <button type="button" class="btn btn-outline-secondary" @onclick="ClearForm" disabled="@_loading">@Loc["Search_Clear"]</button>
+            </div>
+        </EditForm>
+    </div>
+</div>
+
+@if (_response?.LimitExceeded == true)
+{
+    <div class="alert alert-warning d-flex justify-content-between align-items-center" role="alert">
+        <div>
+            <strong>@Loc["GuestSearchLimit_Title"]</strong>
+            <p class="mb-0">@string.Format(Loc["GuestSearchLimit_Reached"].Value, _response.GuestSearchLimit)</p>
+            <p class="mb-0 small"><a href="/@(LocaleService.GetCurrentLocale())/Account/Register">@Loc["Nav_Register"]</a>@Loc["Common_Or"]<a href="/@(LocaleService.GetCurrentLocale())/Account/Login">@Loc["Nav_LogIn"]</a> @Loc["GuestSearchLimit_RegisterLogin"]</p>
+        </div>
+    </div>
+}
+else if (_response?.GuestSearchUsed.HasValue == true && _response.GuestSearchLimit.HasValue)
+{
+    <div class="alert alert-info d-flex justify-content-between align-items-center" role="alert">
+        <div>
+            <strong>@Loc["GuestSearchLimit_Title"]</strong>
+            <p class="mb-0">@string.Format(Loc["GuestSearchLimit_Used"].Value, _response.GuestSearchUsed, _response.GuestSearchLimit, _response.GuestSearchLimit - _response.GuestSearchUsed)</p>
+            <p class="mb-0 small"><a href="/@(LocaleService.GetCurrentLocale())/Account/Register">@Loc["Nav_Register"]</a>@Loc["Common_Or"]<a href="/@(LocaleService.GetCurrentLocale())/Account/Login">@Loc["Nav_LogIn"]</a> @Loc["GuestSearchLimit_RegisterLogin"]</p>
+        </div>
+    </div>
+}
+
+@if (_response?.Result != null)
+{
+    var res = _response.Result;
+    var totalPages = Math.Max(1, (res.TotalCount + res.PageSize - 1) / res.PageSize);
+    <p class="text-muted mb-2">@Loc["Common_Total"]: @res.TotalCount. @string.Format(Loc["Common_PageOf"].Value, res.Page, totalPages).</p>
+    <div class="table-responsive">
+        <table class="table table-striped table-hover table-bordered">
+            <thead class="table-light">
+                <tr>
+                    <th>@Loc["Common_Thumbnail"]</th>
+                    <th>@Loc["Search_Poststed"]</th>
+                    <th>@Loc["Search_Stempeltekst"]</th>
+                    <th>@Loc["Search_Kommune"]</th>
+                    <th>@Loc["Search_Fylke"]</th>
+                    <th>@Loc["Search_Stempeltype"]</th>
+                    <th>@Loc["Common_FirstLastKnown"]</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in res.Items)
+                {
+                    <tr>
+                        <td>
+                            @if (!string.IsNullOrEmpty(r.ThumbnailUrl))
+                            {
+                                <button type="button" class="btn btn-link p-0 border-0" @onclick="() => OpenRecordDetail(r.StempelId)" title="@Loc["Common_ViewPostmarkDetails"]">
+                                    <img src="@r.ThumbnailUrl" alt="Postmark" width="48" height="48" class="rounded thumbnail-clickable" />
+                                </button>
+                            }
+                            else
+                            {
+                                <button type="button" class="btn btn-link p-0 border-0 text-muted small" @onclick="() => OpenRecordDetail(r.StempelId)" title="@Loc["Common_ViewPostmarkDetails"]">@Loc["Common_NoImage"]</button>
+                            }
+                        </td>
+                        <td><strong>@r.PoststedNavn</strong></td>
+                        <td>@r.StempeltekstOppe</td>
+                        <td>@r.KommuneNavn</td>
+                        <td>@r.FylkeNavn</td>
+                        <td>@(r.StempeltypeCode ?? r.StempeltypeFullTekst ?? "—")</td>
+                        <td>@r.FirstKnownDate / @r.LastKnownDate</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    @if (res.Items.Count == 0)
+    {
+        <p class="text-muted">@Loc["Search_NoResults"]</p>
+    }
+    @if (totalPages > 1)
+    {
+        <nav class="pagination-wrap" aria-label="Search results pagination">
+            <span class="pagination-text">@string.Format(Loc["Common_PageOf"].Value, res.Page, totalPages)</span>
+            <ul class="pagination mb-0">
+                <li class="page-item @(res.Page <= 1 ? "disabled" : "")">
+                    <button type="button" class="page-link" @onclick="() => GoToPage(res.Page - 1)" disabled="@(res.Page <= 1)">@Loc["Common_Previous"]</button>
+                </li>
+                @foreach (var p in GetPageNumbers(res.Page, totalPages))
+                {
+                    var page = p;
+                    <li class="page-item @(page == res.Page ? "active" : "")">
+                        <button type="button" class="page-link" @onclick="() => GoToPage(page)">@(page)</button>
+                    </li>
+                }
+                <li class="page-item @(res.Page >= totalPages ? "disabled" : "")">
+                    <button type="button" class="page-link" @onclick="() => GoToPage(res.Page + 1)" disabled="@(res.Page >= totalPages)">Next</button>
+                </li>
+            </ul>
+        </nav>
+    }
+}
+
+@* Record detail modal *@
+@if (_recordDetailId.HasValue)
+{
+    <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.7);" @onclick="CloseRecordDetailModal">
+        <div class="modal-dialog modal-dialog-centered modal-lg" @onclick:stopPropagation>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@Loc["Modal_PostmarkDetails"]</h5>
+                    <button type="button" class="btn-close" @onclick="CloseRecordDetailModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (_recordDetailLoading)
+                    {
+                        <p class="text-muted">@Loc["Common_Loading"]</p>
+                    }
+                    else if (_recordDetail != null)
+                    {
+                        <div class="d-flex gap-3 flex-wrap">
+                            @if (!string.IsNullOrEmpty(_recordDetail.ThumbnailUrl))
+                            {
+                                <div class="flex-shrink-0"><img src="@_recordDetail.ThumbnailUrl" alt="Postmark" class="rounded" style="max-width: 200px;" /></div>
+                            }
+                            <div class="flex-grow-1">
+                                <dl class="row mb-0 small">
+                                    <dt class="col-sm-4">@Loc["Search_Stempeltekst"]</dt>
+                                    <dd class="col-sm-8">@_recordDetail.StempeltekstOppe</dd>
+                                    <dt class="col-sm-4">@Loc["Search_Poststed"]</dt>
+                                    <dd class="col-sm-8">@_recordDetail.PoststedNavn</dd>
+                                    <dt class="col-sm-4">@Loc["Search_Kommune"]</dt>
+                                    <dd class="col-sm-8">@(_recordDetail.KommuneNavn ?? "—")</dd>
+                                    <dt class="col-sm-4">@Loc["Search_Fylke"]</dt>
+                                    <dd class="col-sm-8">@(_recordDetail.FylkeNavn ?? "—")</dd>
+                                    <dt class="col-sm-4">@Loc["Search_Stempeltype"]</dt>
+                                    <dd class="col-sm-8">@(_recordDetail.StempeltypeCode ?? _recordDetail.StempeltypeFullTekst ?? "—")</dd>
+                                    <dt class="col-sm-4">@Loc["Record_FirstLastKnownRecord"]</dt>
+                                    <dd class="col-sm-8">@(_recordDetail.FirstKnownDate ?? "—") / @(_recordDetail.LastKnownDate ?? "—")</dd>
+                                    @if (!string.IsNullOrEmpty(_recordDetail.Kommentar))
+                                    {
+                                        <dt class="col-sm-4">@Loc["Record_Kommentar"]</dt>
+                                        <dd class="col-sm-8">@_recordDetail.Kommentar</dd>
+                                    }
+                                </dl>
+                            </div>
+                        </div>
+                        @if (_recordDetail.UsagePeriods.Count > 0)
+                        {
+                            <h6 class="mt-3 mb-2">@Loc["Record_UsagePeriods"]</h6>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered">
+                                    <thead class="table-light"><tr><th>@Loc["Record_FirstKnown"]</th><th>@Loc["Record_LastKnown"]</th><th>@Loc["Record_Kommentarer"]</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var up in _recordDetail.UsagePeriods)
+                                        {
+                                            <tr>
+                                                <td>@(up.DatoFoersteKjenteBruksdato ?? "—")</td>
+                                                <td>@(up.DatoSisteKjenteBruksdato ?? "—")</td>
+                                                <td>@(up.Kommentarer ?? "—")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        <div class="mt-3 pt-2 border-top">
+                            <p class="mb-0 small d-flex flex-wrap align-items-center gap-2">
+                                <a href="/@(LocaleService.GetCurrentLocale())/record/@_recordDetail.StempelId">@Loc["Record_OpenFullPage"]</a>
+                                <span class="text-muted">|</span>
+                                <AuthorizeView Policy="AdminOrSuperuser"><Authorized><a href="/@(LocaleService.GetCurrentLocale())/admin/record/edit/@_recordDetail.StempelId">@Loc["Common_Edit"]</a><span class="text-muted">|</span></Authorized></AuthorizeView>
+                                @if (_isReporter)
+                                {
+                                    <span role="button" tabindex="0" class="btn btn-sm btn-success" @onclick="OnSubmitReportClick" @onclick:preventDefault @onclick:stopPropagation @onkeydown="OnSubmitReportKeydown" @onkeydown:preventDefault @onkeydown:stopPropagation>@Loc["Report_Submit"]</span>
+                                }
+                            </p>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="text-muted">@Loc["Record_NotFound"]</p>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* Submit report modal *@
+@if (_showSubmitReportModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5); z-index: 1060;">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title">@Loc["Report_Submit"]</h5><button type="button" class="btn-close" @onclick="CloseSubmitReportModal"></button></div>
+                <div class="modal-body">
+                    <p class="small text-muted">@Loc["Report_Stamp"]: @_submitReportStempeltekst</p>
+                    <div class="mb-2"><label class="form-label">@Loc["Report_UsagePeriod"]</label><select class="form-select" @bind="_submitBruksperiodeId"><option value="0">@Loc["Common_Select"]</option>@foreach (var up in _usagePeriodOptions) { <option value="@up.BruksperiodeId">@up.DisplayText</option> }</select></div>
+                    <div class="mb-2"><label class="form-label">@Loc["Report_ReportingDate"]</label><InputDate class="form-control" @bind-Value="_submitRapporteringsdato" /></div>
+                    <div class="mb-2"><label class="form-label">@Loc["Report_ReportType"]</label><select class="form-select" @bind="_submitFoersteSiste"><option value="F">@Loc["Report_FirstKnownDate"]</option><option value="S">@Loc["Report_LastKnownDate"]</option></select></div>
+                    <div class="mb-2"><label class="form-label">@Loc["Report_DateOfImprint"]</label><InputText class="form-control" @bind-Value="_submitDatoAvtrykk" maxlength="15" /></div>
+                    <div class="mb-2"><label class="form-label">@Loc["Report_ImagesAtLeastOne"]</label><InputFile type="file" multiple accept="image/*" OnChange="OnReportImagesChanged" class="form-control" /></div>
+                    @if (_submitError != null) { <p class="text-danger small">@_submitError</p> }
+                </div>
+                <div class="modal-footer"><button type="button" class="btn btn-secondary" @onclick="CloseSubmitReportModal">@Loc["RecordEdit_Cancel"]</button><button type="button" class="btn btn-primary" @onclick="SubmitReport" disabled="@_submitLoading">@(_submitLoading ? Loc["Common_Submitting"].Value : Loc["Report_Submit"].Value)</button></div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public string Locale { get; set; } = "no";
+
+    private readonly SearchRequest _request = new() { Page = 1, PageSize = 10 };
+    private DropdownsDto _dropdowns = new();
+    private SearchResponseDto? _response;
+    private bool _loading;
+    private bool _isReporter;
+    private int? _recordDetailId;
+    private RecordDetailDto? _recordDetail;
+    private bool _recordDetailLoading;
+    private bool _showSubmitReportModal;
+    private int _submitStempelId;
+    private string? _submitReportStempeltekst;
+    private List<UsagePeriodOptionDto> _usagePeriodOptions = new();
+    private int _submitBruksperiodeId;
+    private DateOnly _submitRapporteringsdato = DateOnly.FromDateTime(DateTime.Today);
+    private string _submitFoersteSiste = "F";
+    private string _submitDatoAvtrykk = "";
+    private List<string> _submitImagePaths = new();
+    private string? _submitError;
+    private bool _submitLoading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _dropdowns = await DropdownService.GetDropdownsAsync();
+        var user = await AuthService.GetCurrentUserAsync();
+        _isReporter = false;
+        if (user != null)
+        {
+            var reporter = await ReporterService.GetByUserIdAsync(user.UserId);
+            // Show Submit report only when reporter is approved
+            _isReporter = !string.IsNullOrEmpty(reporter?.Status) && string.Equals(reporter.Status.Trim(), "approved", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private async Task OpenRecordDetail(int stempelId)
+    {
+        _recordDetailId = stempelId;
+        _recordDetail = null;
+        _recordDetailLoading = true;
+        StateHasChanged();
+        try
+        {
+            _recordDetail = await SearchService.GetByIdAsync(stempelId);
+        }
+        finally
+        {
+            _recordDetailLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseRecordDetailModal()
+    {
+        _recordDetailId = null;
+        _recordDetail = null;
+    }
+
+    private async Task OnSubmitReportClick()
+    {
+        await OpenSubmitReportFromDetail();
+    }
+
+    private async Task OnSubmitReportKeydown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" || e.Key == "Space")
+            await OpenSubmitReportFromDetail();
+    }
+
+    private async Task OpenSubmitReportFromDetail()
+    {
+        if (_recordDetail == null) return;
+        var stempelId = _recordDetail.StempelId;
+        var stempeltekst = _recordDetail.StempeltekstOppe ?? "";
+        try
+        {
+            _submitStempelId = stempelId;
+            _submitReportStempeltekst = stempeltekst;
+            _usagePeriodOptions = (await ReportingService.GetUsagePeriodsForStampAsync(stempelId)).ToList();
+            _submitBruksperiodeId = _usagePeriodOptions.FirstOrDefault()?.BruksperiodeId ?? 0;
+            _submitRapporteringsdato = DateOnly.FromDateTime(DateTime.Today);
+            _submitFoersteSiste = "F";
+            _submitDatoAvtrykk = "";
+            _submitImagePaths = new List<string>();
+            _submitError = null;
+            _showSubmitReportModal = true;
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private async Task OpenSubmitReport(SearchResultDto r)
+    {
+        _submitStempelId = r.StempelId;
+        _submitReportStempeltekst = r.StempeltekstOppe;
+        _usagePeriodOptions = (await ReportingService.GetUsagePeriodsForStampAsync(r.StempelId)).ToList();
+        _submitBruksperiodeId = _usagePeriodOptions.FirstOrDefault()?.BruksperiodeId ?? 0;
+        _submitRapporteringsdato = DateOnly.FromDateTime(DateTime.Today);
+        _submitFoersteSiste = "F";
+        _submitDatoAvtrykk = "";
+        _submitImagePaths = new List<string>();
+        _submitError = null;
+        _showSubmitReportModal = true;
+    }
+
+    private async Task OnReportImagesChanged(InputFileChangeEventArgs e)
+    {
+        _submitImagePaths = new List<string>();
+        foreach (var file in e.GetMultipleFiles(10))
+        {
+            try
+            {
+                await using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+                var path = await ImageStorage.UploadAsync(stream, file.Name, "report");
+                _submitImagePaths.Add(path);
+            }
+            catch { }
+        }
+    }
+
+    private async Task SubmitReport()
+    {
+        _submitError = null;
+        if (_submitBruksperiodeId <= 0) { _submitError = "Select a usage period."; return; }
+        if (string.IsNullOrWhiteSpace(_submitDatoAvtrykk)) { _submitError = "Date of imprint is required."; return; }
+        if (_submitImagePaths.Count == 0) { _submitError = "At least one image is required."; return; }
+        var user = await AuthService.GetCurrentUserAsync();
+        if (user == null) { _submitError = "Not logged in."; return; }
+        var reporter = await ReporterService.GetByUserIdAsync(user.UserId);
+        if (reporter == null || !string.Equals(reporter.Status?.Trim(), "approved", StringComparison.OrdinalIgnoreCase)) { _submitError = "You must be an approved reporter."; return; }
+        _submitLoading = true;
+        try
+        {
+            var req = new ReportSubmitRequest
+            {
+                StempelId = _submitStempelId,
+                BruksperiodeId = _submitBruksperiodeId,
+                Rapporteringsdato = _submitRapporteringsdato,
+                RapporteringFoersteSisteDato = _submitFoersteSiste,
+                DatoForRapportertAvtrykk = _submitDatoAvtrykk.Trim(),
+                ImagePaths = _submitImagePaths
+            };
+            var id = await ReportingService.SubmitReportAsync(reporter.RapportoerId, req);
+            if (id.HasValue) { CloseSubmitReportModal(); } else _submitError = "Submit failed.";
+        }
+        finally { _submitLoading = false; }
+    }
+
+    private void CloseSubmitReportModal()
+    {
+        _showSubmitReportModal = false;
+    }
+
+    private async Task DoSearch()
+    {
+        _loading = true;
+        try
+        {
+            _response = await SearchService.SearchAsync(_request);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ClearForm()
+    {
+        _request.Poststed = "";
+        _request.Stempeltekst = "";
+        _request.Kommune = "";
+        _request.FylkeId = null;
+        _request.StempeltypeId = null;
+        _request.Page = 1;
+        _response = null;
+    }
+
+    private async Task GoToPage(int page)
+    {
+        if (page < 1 || _response?.Result == null) return;
+        var totalPages = Math.Max(1, (_response.Result.TotalCount + _response.Result.PageSize - 1) / _response.Result.PageSize);
+        if (page > totalPages) return;
+        _request.Page = page;
+        await DoSearch();
+    }
+
+    private static IEnumerable<int> GetPageNumbers(int current, int totalPages)
+    {
+        const int half = 2;
+        var start = Math.Max(1, current - half);
+        var end = Math.Min(totalPages, current + half);
+        for (var i = start; i <= end; i++)
+            yield return i;
+    }
+}

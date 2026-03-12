@@ -1,0 +1,36 @@
+@page "/{locale:regex(no|en)}/Account/Login"
+@model PlaceNamesBlazor.Pages.Account.LoginModel
+@inject IStringLocalizer<SharedResource> Loc
+@{
+    ViewData["Title"] = Loc["Account_LogIn"].Value;
+}
+
+<div class="row justify-content-center">
+    <div class="col-md-5">
+        <div class="card">
+            <div class="card-header">@Loc["Account_LogIn"]</div>
+            <div class="card-body">
+                @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+                {
+                    <div class="alert alert-danger mb-3" role="alert">@Model.ErrorMessage</div>
+                }
+                <form method="post" asp-page-handler="Login">
+                    <div class="mb-3">
+                        <label asp-for="Email" class="form-label">@Loc["Profile_Email"]</label>
+                        <input asp-for="Email" class="form-control" type="email" autocomplete="email" />
+                        <span asp-validation-for="Email" class="text-danger"></span>
+                    </div>
+                    <div class="mb-3">
+                        <label asp-for="Password" class="form-label">@Loc["Account_Password"]</label>
+                        <input asp-for="Password" class="form-control" type="password" autocomplete="current-password" />
+                        <span asp-validation-for="Password" class="text-danger"></span>
+                    </div>
+                    <button type="submit" class="btn btn-primary">@Loc["Account_SignIn"]</button>
+                </form>
+                <p class="mt-3 mb-0 text-muted small">
+                    <a href="/@(Model.Locale)/Account/Register">@Loc["Account_Register"]</a> | <a href="/@(Model.Locale)">@Loc["Account_Home"]</a>
+                </p>
+            </div>
+        </div>
+    </div>
+</div>

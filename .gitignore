@@ -1,0 +1,36 @@
+# Build results
+[Dd]ebug/
+[Rr]elease/
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+
+# User-specific (secrets, IDE) — do not commit real config
+**/appsettings.json
+**/appsettings.Development.json
+*.user
+.vs/
+.idea/
+.vscode/
+
+# .NET
+*.dll
+*.pdb
+*.cache
+*.log
+*.userprefs
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Keep example config (no secrets)
+!**/appsettings.Example.json
+!**/appsettings.Development.Example.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# OneDrive
+~$*

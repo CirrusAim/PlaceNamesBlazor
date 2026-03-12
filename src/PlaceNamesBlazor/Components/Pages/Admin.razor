@@ -1,0 +1,1860 @@
+@page "/{locale:regex(no|en)}/admin"
+@page "/{locale:regex(no|en)}/admin/{Tab}"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using PlaceNamesBlazor.Contracts.Admin
+@using PlaceNamesBlazor.Contracts.Reporting
+@using Microsoft.AspNetCore.Components.Forms
+@using PlaceNamesBlazor.Contracts.Search
+@using PlaceNamesBlazor.Contracts.Dropdowns
+@using PlaceNamesBlazor.Contracts.Record
+@using PlaceNamesBlazor.Services.Admin
+@using PlaceNamesBlazor.Services.Audit
+@using PlaceNamesBlazor.Contracts.Subcategory
+@using PlaceNamesBlazor.Services.Record
+@using PlaceNamesBlazor.Services.Reporter
+@using PlaceNamesBlazor.Services.Reporting
+@using PlaceNamesBlazor.Services.Subcategory
+@using PlaceNamesBlazor.Services.StampType
+@using PlaceNamesBlazor.Services.ImageStorage
+@attribute [Authorize(Policy = "AdminOrSuperuser")]
+@inject IAuthService AuthService
+@inject IAuditService AuditService
+@inject IAdminUserService AdminUserService
+@inject IReporterService ReporterService
+@inject IReportingService ReportingService
+@inject IStampSearchService StampSearchService
+@inject IDropdownService DropdownService
+@inject IRecordService RecordService
+@inject IBatchImportService BatchImportService
+@inject ISubcategoryService SubcategoryService
+@inject IStampTypeService StampTypeService
+@inject NavigationManager Navigation
+@inject IImageStorageService ImageStorage
+@inject ICurrentLocaleService LocaleService
+@inject IStringLocalizer<SharedResource> Loc
+
+<PageTitle>@Loc["Admin_Title"]</PageTitle>
+<style>
+    /* Admin tables: prevent wrapping so columns expand to fit content */
+    .admin-records-table { min-width: 1320px; }
+    .admin-records-table th:nth-child(8),
+    .admin-records-table td:nth-child(8) { white-space: nowrap; min-width: 240px; }
+    .admin-records-table th:nth-child(3),
+    .admin-records-table td:nth-child(3),
+    .admin-records-table th:nth-child(4),
+    .admin-records-table td:nth-child(4),
+    .admin-records-table th:nth-child(5),
+    .admin-records-table td:nth-child(5),
+    .admin-records-table th:nth-child(6),
+    .admin-records-table td:nth-child(6),
+    .admin-records-table th:nth-child(7),
+    .admin-records-table td:nth-child(7),
+    .admin-records-table th:nth-child(8),
+    .admin-records-table td:nth-child(8) { white-space: nowrap; }
+    .admin-reports-table th:nth-child(1),
+    .admin-reports-table td:nth-child(1),
+    .admin-reports-table th:nth-child(2),
+    .admin-reports-table td:nth-child(2),
+    .admin-reports-table th:nth-child(3),
+    .admin-reports-table td:nth-child(3),
+    .admin-reports-table th:nth-child(4),
+    .admin-reports-table td:nth-child(4),
+    .admin-reports-table th:nth-child(5),
+    .admin-reports-table td:nth-child(5),
+    .admin-reports-table th:nth-child(6),
+    .admin-reports-table td:nth-child(6) { white-space: nowrap; }
+    .admin-users-table th:nth-child(1),
+    .admin-users-table td:nth-child(1),
+    .admin-users-table th:nth-child(2),
+    .admin-users-table td:nth-child(2),
+    .admin-users-table th:nth-child(3),
+    .admin-users-table td:nth-child(3),
+    .admin-users-table th:nth-child(4),
+    .admin-users-table td:nth-child(4),
+    .admin-users-table th:nth-child(5),
+    .admin-users-table td:nth-child(5),
+    .admin-users-table th:nth-child(6),
+    .admin-users-table td:nth-child(6) { white-space: nowrap; }
+    .admin-audit-table th:nth-child(1),
+    .admin-audit-table td:nth-child(1),
+    .admin-audit-table th:nth-child(2),
+    .admin-audit-table td:nth-child(2),
+    .admin-audit-table th:nth-child(3),
+    .admin-audit-table td:nth-child(3),
+    .admin-audit-table th:nth-child(4),
+    .admin-audit-table td:nth-child(4),
+    .admin-audit-table th:nth-child(5),
+    .admin-audit-table td:nth-child(5) { white-space: nowrap; }
+</style>
+
+<ul class="nav nav-tabs mb-4 app-admin-tabs">
+    <li class="nav-item"><a class="nav-link @(Tab == "records" ? "active" : "")" href="@GetPath("admin/records")">@Loc["Admin_Records"]</a></li>
+    <li class="nav-item">
+        <a class="nav-link @(Tab == "reports" ? "active" : "") d-inline-flex align-items-center gap-1" href="@GetPath("admin/reports")">
+            @Loc["Admin_Reports"]
+            @if (_pendingReportsCount > 0)
+            {
+                <span class="badge-pending count" title="@Loc["Admin_PendingReportsTitle"]">@(_pendingReportsCount > 99 ? "99+" : _pendingReportsCount)</span>
+            }
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link @(Tab == "users" ? "active" : "") d-inline-flex align-items-center gap-1" href="@GetPath("admin/users")">
+            @Loc["Admin_Users"]
+            @if (_pendingReportersCount > 0)
+            {
+                <span class="badge-pending count" title="@Loc["Admin_PendingReporters"]">@(_pendingReportersCount > 99 ? "99+" : _pendingReportersCount)</span>
+            }
+        </a>
+    </li>
+    <li class="nav-item"><a class="nav-link @(Tab == "stamptypes" || Tab == "subcategories" ? "active" : "")" href="@GetPath("admin/stamptypes")">@Loc["Admin_StampTypes"]</a></li>
+    @if (_currentUserRole == "admin")
+    {
+        <li class="nav-item"><a class="nav-link @(Tab == "audit" ? "active" : "")" href="@GetPath("admin/audit")">@Loc["Admin_Audit"]</a></li>
+    }
+</ul>
+
+@if (Tab == "stamptypes" || Tab == "subcategories")
+{
+    <ul class="nav nav-pills mb-3">
+        <li class="nav-item"><a class="nav-link @(Tab == "stamptypes" ? "active" : "")" href="@GetPath("admin/stamptypes")">@Loc["Admin_StampTypes"]</a></li>
+        <li class="nav-item"><a class="nav-link @(Tab == "subcategories" ? "active" : "")" href="@GetPath("admin/subcategories")">@Loc["Admin_Subcategories"]</a></li>
+    </ul>
+}
+
+<div class="card">
+    <div class="card-body">
+        @switch (Tab)
+        {
+            case "reports":
+                <div class="mb-2">
+                    <label class="form-label small me-2">@Loc["Admin_Status"]</label>
+                    <select class="form-select form-select-sm d-inline-block w-auto" @bind="_reportsStatusFilter" @bind:after="OnReportsFilterChanged">
+                        <option value="">@Loc["Admin_All"]</option>
+                        <option value="pending">@Loc["Admin_Pending"]</option>
+                        <option value="G">@Loc["Profile_Approved"]</option>
+                        <option value="F">@Loc["Profile_Rejected"]</option>
+                    </select>
+                </div>
+                <p class="text-muted small mb-2">@string.Format(Loc["Admin_ReportCount"].Value, _reportsTotalCount, _reportsPage, GetReportsTotalPages())</p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped table-bordered admin-reports-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th>@Loc["Common_Date"]</th>
+                                <th>@Loc["Report_Stamp"]</th>
+                                <th>@Loc["Admin_Reporter"]</th>
+                                <th>@Loc["Admin_StampType"]</th>
+                                <th>@Loc["Admin_Status"]</th>
+                                <th>@Loc["Common_Actions"]</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in _reportsList)
+                            {
+                                <tr class="@(r.GodkjentForkastet == null ? "row-pending" : "")">
+                                    <td>@r.Rapporteringsdato.ToString("yyyy-MM-dd")</td>
+                                    <td>
+                                        @if (r.GodkjentForkastet == null)
+                                        {
+                                            <span class="badge-pending dot" title="@Loc["Admin_Pending"]" aria-hidden="true"></span>
+                                        }
+                                        @r.StempeltekstOppe
+                                    </td>
+                                    <td>@r.RapportoerNavn (@r.RapportoerInitialer)</td>
+                                    <td>@(r.RapporteringFoersteSisteDato == "F" ? Loc["Common_First"] : Loc["Common_Last"])</td>
+                                    <td>
+                                        @if (r.GodkjentForkastet == null)
+                                        {
+                                            <span class="badge-pending pill">@Loc["Admin_Pending"]</span>
+                                        }
+                                        else
+                                        {
+                                            @(r.GodkjentForkastet == "G" ? Loc["Profile_Approved"] : Loc["Profile_Rejected"])
+                                        }
+                                    </td>
+                                    <td>
+                                        <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => OpenReportDetail(r)">@Loc["Admin_View"]</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
+                    <div class="btn-group btn-group-sm">
+                        <button type="button" class="btn btn-outline-secondary" disabled="@(_reportsPage <= 1)" @onclick="ReportsFirstPage">@Loc["Common_First"]</button>
+                        <button type="button" class="btn btn-outline-secondary" disabled="@(_reportsPage <= 1)" @onclick="ReportsPrevPage">@Loc["Common_Prev"]</button>
+                        <button type="button" class="btn btn-outline-secondary" disabled="@(_reportsPage >= GetReportsTotalPages())" @onclick="ReportsNextPage">@Loc["Common_Next"]</button>
+                        <button type="button" class="btn btn-outline-secondary" disabled="@(_reportsPage >= GetReportsTotalPages())" @onclick="ReportsLastPage">@Loc["Common_Last"]</button>
+                    </div>
+                </div>
+                @if (_showReportDetailModal && _reportDetailView != null)
+                {
+                    <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+                        <div class="modal-dialog modal-dialog-centered modal-lg">
+                            <div class="modal-content">
+                                <div class="modal-header"><h5 class="modal-title">@Loc["Report_ReportDetails"]</h5><button type="button" class="btn-close" @onclick="CloseReportDetailModal"></button></div>
+                                <div class="modal-body">
+                                    <dl class="row mb-2 small">
+                                        <dt class="col-sm-3">@Loc["Report_Stamp"]</dt>
+                                        <dd class="col-sm-9">@_reportDetailView.StempeltekstOppe</dd>
+                                        <dt class="col-sm-3">@Loc["Admin_Reporter"]</dt>
+                                        <dd class="col-sm-9">@_reportDetailView.RapportoerNavn (@_reportDetailView.RapportoerInitialer)</dd>
+                                        <dt class="col-sm-3">@Loc["Report_ReportingDate"]</dt>
+                                        <dd class="col-sm-9">@_reportDetailView.Rapporteringsdato.ToString("yyyy-MM-dd")</dd>
+                                        <dt class="col-sm-3">@Loc["Report_ReportType"]</dt>
+                                        <dd class="col-sm-9">@(_reportDetailView.RapporteringFoersteSisteDato == "F" ? Loc["Report_FirstKnownDate"] : Loc["Report_LastKnownDate"])</dd>
+                                        <dt class="col-sm-3">@Loc["Report_DateOfImprint"]</dt>
+                                        <dd class="col-sm-9">@_reportDetailView.DatoForRapportertAvtrykk</dd>
+                                        <dt class="col-sm-3">@Loc["Admin_Submitted"]</dt>
+                                        <dd class="col-sm-9">@(_reportDetailView.CreatedAt?.ToString("yyyy-MM-dd HH:mm") ?? "—")</dd>
+                                        <dt class="col-sm-3">@Loc["Admin_Status"]</dt>
+                                        <dd class="col-sm-9">
+                                            @if (_reportDetailView.GodkjentForkastet == null) { <span class="badge bg-warning text-dark">@Loc["Admin_Pending"]</span> }
+                                            else if (_reportDetailView.GodkjentForkastet == "G") { <span class="badge bg-success">@Loc["Profile_Approved"]</span> @if (_reportDetailView.BesluttetDato.HasValue) { <span class="text-muted small">@_reportDetailView.BesluttetDato.Value.ToString("yyyy-MM-dd") @(_reportDetailView.InitialerBeslutter != null ? Loc["Common_By"].Value + " " + _reportDetailView.InitialerBeslutter : "")</span> } }
+                                            else { <span class="badge bg-danger">@Loc["Profile_Rejected"]</span> @if (_reportDetailView.BesluttetDato.HasValue) { <span class="text-muted small">@_reportDetailView.BesluttetDato.Value.ToString("yyyy-MM-dd") @(_reportDetailView.InitialerBeslutter != null ? Loc["Common_By"].Value + " " + _reportDetailView.InitialerBeslutter : "")</span> } }
+                                        </dd>
+                                    </dl>
+                                    @if (_reportDetailView.Images != null && _reportDetailView.Images.Count > 0)
+                                    {
+                                        <h6 class="mt-3 mb-2">@Loc["Report_ReportImages"]</h6>
+                                        <div class="d-flex flex-wrap gap-2">
+                                            @foreach (var img in _reportDetailView.Images)
+                                            {
+                                                @if (!string.IsNullOrEmpty(img.BildePath))
+                                                {
+                                                    <a href="@ImageStorage.GetDisplayUrl(img.BildePath)" target="_blank" rel="noopener noreferrer" class="d-block">
+                                                        <img src="@ImageStorage.GetDisplayUrl(img.BildePath)" alt="@(img.BildeFilnavn ?? Loc["Common_ReportImage"].Value)" class="rounded border" style="max-width: 180px; max-height: 180px; object-fit: contain;" />
+                                                    </a>
+                                                }
+                                            }
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <p class="text-muted small mt-2 mb-0">No images attached.</p>
+                                    }
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" @onclick="CloseReportDetailModal">@Loc["RecordEdit_Cancel"]</button>
+                                    @if (_reportDetailView.GodkjentForkastet == null && CanApproveRejectReport(_reportDetailView))
+                                    {
+                                        <button type="button" class="btn btn-success" @onclick="() => { OpenApproveReport(_reportDetailView); CloseReportDetailModal(); }">@Loc["Report_Approve"]</button>
+                                        <button type="button" class="btn btn-warning" @onclick="() => { OpenRejectReport(_reportDetailView); CloseReportDetailModal(); }">@Loc["Report_Reject"]</button>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                @if (_showApproveModal && _reportAction != null)
+                {
+                    <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5); z-index: 1060;">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header"><h5 class="modal-title">@(_reportActionApprove ? Loc["Report_ApproveReport"] : Loc["Report_RejectReport"])</h5><button type="button" class="btn-close" @onclick="CloseReportModal"></button></div>
+                                <div class="modal-body">
+                                    <div class="mb-2"><label class="form-label">@Loc["Report_InitialerDecider"]</label><input type="text" class="form-control" @bind="_reportInitialer" placeholder="@Loc["Report_YourInitials"]" /></div>
+                                    @if (_reportActionApprove)
+                                    {
+                                        <div class="mb-2"><label class="form-label">@Loc["Report_CommentsOptional"]</label><input type="text" class="form-control" @bind="_reportKommentarer" maxlength="100" /></div>
+                                    }
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" @onclick="CloseReportModal">@Loc["RecordEdit_Cancel"]</button>
+                                    <button type="button" class="btn @(_reportActionApprove ? "btn-success" : "btn-warning")" @onclick="SubmitReportAction">@(_reportActionApprove ? Loc["Report_Approve"] : Loc["Report_Reject"])</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                break;
+            case "users":
+                <div class="row g-2 mb-3 align-items-end">
+                    <div class="col-md-2">
+                        <label class="form-label small">@Loc["Admin_Role"]</label>
+                        <select class="form-select form-select-sm" @bind="_usersRoleFilter">
+                            <option value="">@Loc["Admin_AllRoles"]</option>
+                            <option value="admin">@Loc["Admin_RoleAdmin"]</option>
+                            <option value="superuser">@Loc["Admin_RoleSuperuser"]</option>
+                            <option value="registered">@Loc["Admin_RoleRegistered"]</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">@Loc["Search_Button"]</label>
+                        <input type="text" class="form-control form-control-sm" @bind="_usersSearchFilter" placeholder="@Loc["Admin_NameEmailUsername"]" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">@Loc["Admin_ReporterStatusFilter"]</label>
+                        <select class="form-select form-select-sm" @bind="_usersReporterFilter">
+                            <option value="">@Loc["Admin_All"]</option>
+                            <option value="pending">@Loc["Admin_Pending"]</option>
+                            <option value="approved">@Loc["Profile_Approved"]</option>
+                            <option value="rejected">@Loc["Profile_Rejected"]</option>
+                            <option value="none">@Loc["Admin_None"]</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 d-flex gap-1">
+                        <button type="button" class="btn btn-primary btn-sm" @onclick="ApplyUsersFilters">@Loc["Common_Apply"]</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ClearUsersFilters">@Loc["Search_Clear"]</button>
+                    </div>
+                </div>
+                <p class="text-muted small mb-2">@string.Format(Loc["Admin_UserCount"].Value, GetUsersFiltered().Count(), GetUsersCurrentPage(), GetUsersTotalPages())</p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped table-bordered admin-users-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th>@Loc["Admin_Name"]</th>
+                                <th>@Loc["Admin_Email"]</th>
+                                <th>@Loc["Admin_Role"]</th>
+                                <th>@Loc["Admin_Reporter"]</th>
+                                <th>@Loc["Admin_LastLogin"]</th>
+                                <th>@Loc["Common_Actions"]</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var u in GetUsersPaged())
+                            {
+                                <tr class="@(u.ReporterStatus == "pending" ? "row-pending" : "")">
+                                    <td>
+                                        <button type="button" class="admin-user-name-link" @onclick="() => OpenManageUser(u)">@u.FirstName @u.MiddleName @u.LastName</button>
+                                    </td>
+                                    <td>@u.Email</td>
+                                    <td>@u.Role</td>
+                                    <td>
+                                        @if (u.ReporterStatus == "pending")
+                                        {
+                                            <span class="badge-pending dot" title="@Loc["Admin_PendingReporterRequest"]" aria-hidden="true"></span>
+                                            <text>@Loc["Admin_Pending"]</text>
+                                        }
+                                        else if (u.ReporterStatus == "approved")
+                                        {
+                                            @(string.IsNullOrEmpty(u.ApprovedByEmail) ? Loc["Profile_Approved"] : string.Format(Loc["Admin_ApprovedBy"].Value, u.ApprovedByEmail))
+                                        }
+                                        else if (u.ReporterStatus == "rejected")
+                                        {
+                                            <text>@Loc["Profile_Rejected"]</text>
+                                        }
+                                        else if (u.ReporterStatus != null)
+                                        {
+                                            @u.ReporterStatus
+                                        }
+                                        else
+                                        {
+                                            <text>—</text>
+                                        }
+                                    </td>
+                                    <td>@(u.LastLogin?.ToString("yyyy-MM-dd") ?? "—")</td>
+                                    <td class="admin-user-actions-cell">
+                                        <div class="d-flex flex-wrap gap-1 align-items-center">
+                                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => OpenEditUser(u)" disabled="@(u.Role == "admin")">Edit</button>
+                                            @if (_currentUserRole == "admin" && u.Role != "admin" && u.UserId != _currentUserId)
+                                            {
+                                                <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDeleteUser(u)">@Loc["Common_Delete"]</button>
+                                            }
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
+                    <div class="btn-group btn-group-sm">
+                        <button type="button" class="btn btn-outline-secondary" disabled="@(GetUsersCurrentPage() <= 1)" @onclick="UsersFirstPage">@Loc["Common_First"]</button>
+                        <button type="button" class="btn btn-outline-secondary" disabled="@(GetUsersCurrentPage() <= 1)" @onclick="UsersPrevPage">@Loc["Common_Prev"]</button>
+                        <button type="button" class="btn btn-outline-secondary" disabled="@(GetUsersCurrentPage() >= GetUsersTotalPages())" @onclick="UsersNextPage">@Loc["Common_Next"]</button>
+                        <button type="button" class="btn btn-outline-secondary" disabled="@(GetUsersCurrentPage() >= GetUsersTotalPages())" @onclick="UsersLastPage">@Loc["Common_Last"]</button>
+                    </div>
+                </div>
+                @if (_showEditModal && _editingUser != null)
+                {
+                    <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header"><h5 class="modal-title">@Loc["Admin_EditUser"]</h5><button type="button" class="btn-close" @onclick="CloseEditUser"></button></div>
+                                <div class="modal-body">
+                                    <div class="mb-2"><label class="form-label">@Loc["Admin_FirstName"]</label><input type="text" class="form-control" @bind="_editFirstName" /></div>
+                                    <div class="mb-2"><label class="form-label">@Loc["Admin_LastName"]</label><input type="text" class="form-control" @bind="_editLastName" /></div>
+                                    <div class="mb-2"><label class="form-label">@Loc["Admin_Email"]</label><input type="email" class="form-control" @bind="_editEmail" /></div>
+                                    <div class="mb-2"><label class="form-label">@Loc["Admin_Username"]</label><input type="text" class="form-control" @bind="_editUsername" /></div>
+                                    <div class="mb-2"><label class="form-label">@Loc["Profile_Telephone"]</label><input type="tel" class="form-control" @bind="_editTelephone" /></div>
+                                    @if (!string.IsNullOrEmpty(_userEditError))
+                                    {
+                                        <p class="text-danger small">@_userEditError</p>
+                                    }
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" @onclick="CloseEditUser">@Loc["RecordEdit_Cancel"]</button>
+                                    <button type="button" class="btn btn-primary" @onclick="SaveEditUser">@Loc["Profile_Save"]</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                @if (_showDeleteConfirm && _userToDelete != null)
+                {
+                    <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header"><h5 class="modal-title">@Loc["Modal_ConfirmDelete"]</h5><button type="button" class="btn-close" @onclick="() => { _showDeleteConfirm = false; _userToDelete = null; }"></button></div>
+                                <div class="modal-body">@Loc["Admin_DeactivateUserConfirm", _userToDelete.Email]</div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" @onclick="() => { _showDeleteConfirm = false; _userToDelete = null; }">@Loc["RecordEdit_Cancel"]</button>
+                                    <button type="button" class="btn btn-danger" @onclick="DoDeleteUser">@Loc["Common_Delete"]</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                @if (_showManageModal && _manageUser != null)
+                {
+                    <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">@Loc["Admin_ManageUser"] — @_manageUser.FirstName @_manageUser.MiddleName @_manageUser.LastName</h5>
+                                    <button type="button" class="btn-close" @onclick="CloseManageUser"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p class="text-muted small mb-3">@_manageUser.Email</p>
+                                    @if (_manageUser.RapportoerId.HasValue)
+                                    {
+                                        <div class="mb-3">
+                                            <label class="form-label small fw-semibold">@Loc["Admin_ReporterStatusFilter"]</label>
+                                            <div class="d-flex flex-wrap align-items-center gap-2">
+                                                @if (_manageUser.ReporterStatus == "pending")
+                                                {
+                                                    <span class="badge bg-warning text-dark">@Loc["Admin_Pending"]</span>
+                                                }
+                                                else if (_manageUser.ReporterStatus == "approved")
+                                                {
+                                                    <span class="badge bg-success">@Loc["Profile_Approved"]</span>
+                                                    @if (!string.IsNullOrEmpty(_manageUser.ApprovedByEmail))
+                                                    {
+                                                        <span class="text-muted small">by @_manageUser.ApprovedByEmail</span>
+                                                    }
+                                                }
+                                                else if (_manageUser.ReporterStatus == "rejected")
+                                                {
+                                                    <span class="badge bg-danger">@Loc["Profile_Rejected"]</span>
+                                                }
+                                                @if ((_manageUser.ReporterStatus == "pending" || _manageUser.ReporterStatus == "rejected") && CanManageReporter(_manageUser))
+                                                {
+                                                    <button type="button" class="btn btn-sm btn-success" @onclick="() => ApproveReporter(_manageUser)">@Loc["Admin_ApproveReporter"]</button>
+                                                    <button type="button" class="btn btn-sm btn-warning" @onclick="() => RejectReporter(_manageUser)">@Loc["Admin_RejectReporter"]</button>
+                                                }
+                                                @if (CanRevokeReporter(_manageUser))
+                                                {
+                                                    <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => RevokeReporter(_manageUser)">@Loc["Admin_RevokeReporter"]</button>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                    @if (_currentUserRole == "admin" && _manageUser.Role != "admin" && _manageUser.UserId != _currentUserId)
+                                    {
+                                        <div>
+                                            <label class="form-label small fw-semibold">@Loc["Admin_Role"]</label>
+                                            <div class="d-flex align-items-center gap-2">
+                                                <select class="form-select form-select-sm admin-role-select" @bind="_manageUser.Role" @bind:after="() => SaveRole(_manageUser)">
+                                                    <option value="registered">registered</option>
+                                                    <option value="superuser">superuser</option>
+                                                </select>
+                                                <span class="text-muted small">Changes save automatically.</span>
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" @onclick="CloseManageUser">Close</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                break;
+            case "audit":
+                @if (_currentUserRole != "admin")
+                {
+                    <p class="card-text text-danger mb-0">@Loc["Audit_OnlyAdmin"]</p>
+                }
+                else
+                {
+                    <div class="row g-2 mb-3 align-items-end">
+                        <div class="col-md-2">
+                            <label class="form-label small">@Loc["Audit_FilterByActionType"]</label>
+                            <select class="form-select form-select-sm" @bind="_auditActionType">
+                                <option value="">@Loc["Audit_AllActions"]</option>
+                                <option value="user_deleted">@Loc["Audit_user_deleted"]</option>
+                                <option value="user_updated">@Loc["Audit_user_updated"]</option>
+                                <option value="role_promoted">@Loc["Audit_role_promoted"]</option>
+                                <option value="role_revoked">@Loc["Audit_role_revoked"]</option>
+                                <option value="reporter_approved">@Loc["Audit_reporter_approved"]</option>
+                                <option value="reporter_rejected">@Loc["Audit_reporter_rejected"]</option>
+                                <option value="reporter_revoked">@Loc["Audit_reporter_revoked"]</option>
+                                <option value="record_created">@Loc["Audit_record_created"]</option>
+                                <option value="record_updated">@Loc["Audit_record_updated"]</option>
+                                <option value="record_deleted">@Loc["Audit_record_deleted"]</option>
+                                <option value="report_approved">@Loc["Audit_report_approved"]</option>
+                                <option value="report_rejected">@Loc["Audit_report_rejected"]</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">@Loc["Audit_FilterByActor"]</label>
+                            <input type="text" class="form-control form-control-sm" @bind="_auditActorFilter" placeholder="@Loc["Audit_EmailRoleOrTarget"]" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">@Loc["Audit_DateFrom"]</label>
+                            <input type="date" class="form-control form-control-sm" @bind="_auditDateFrom" @bind:format="yyyy-MM-dd" />
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">@Loc["Audit_DateTo"]</label>
+                            <input type="date" class="form-control form-control-sm" @bind="_auditDateTo" @bind:format="yyyy-MM-dd" />
+                        </div>
+                        <div class="col-md-2 d-flex gap-1">
+                            <button type="button" class="btn btn-primary btn-sm" @onclick="ApplyAuditFilters" disabled="@_auditLoading">@(_auditLoading ? Loc["Common_Loading"] : Loc["Common_Apply"])</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" @onclick="ClearAuditFilters">@Loc["Search_Clear"]</button>
+                        </div>
+                    </div>
+                    <p class="text-muted small">@string.Format(Loc["Audit_LogEntries"].Value, _auditTotalCount, _auditPage, GetAuditTotalPages())</p>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped table-bordered admin-audit-table">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>@Loc["Audit_Timestamp"]</th>
+                                    <th>@Loc["Audit_Actor"]</th>
+                                    <th>@Loc["Audit_Action"]</th>
+                                    <th>@Loc["Audit_Target"]</th>
+                                    <th>@Loc["Audit_Details"]</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var log in _auditLogs)
+                                {
+                                    <tr>
+                                        <td>@log.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                                        <td>
+                                            <div class="fw-medium">@log.ActorEmail</div>
+                                            <div class="small text-muted">@log.ActorRole</div>
+                                        </td>
+                                        <td><span class="badge bg-secondary">@GetAuditActionType(log.ActionType)</span></td>
+                                        <td>@(log.TargetDescription ?? "-")</td>
+                                        <td><button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => ShowAuditDetail(log)">@Loc["Admin_View"]</button></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
+                        <div class="btn-group btn-group-sm">
+                            <button type="button" class="btn btn-outline-secondary" disabled="@(_auditPage <= 1 || _auditLoading)" @onclick="AuditFirstPage">@Loc["Common_First"]</button>
+                            <button type="button" class="btn btn-outline-secondary" disabled="@(_auditPage <= 1 || _auditLoading)" @onclick="AuditPrevPage">@Loc["Common_Prev"]</button>
+                            <button type="button" class="btn btn-outline-secondary" disabled="@(_auditPage >= GetAuditTotalPages() || _auditLoading)" @onclick="AuditNextPage">@Loc["Common_Next"]</button>
+                            <button type="button" class="btn btn-outline-secondary" disabled="@(_auditPage >= GetAuditTotalPages() || _auditLoading)" @onclick="AuditLastPage">@Loc["Common_Last"]</button>
+                        </div>
+                    </div>
+                }
+                @if (_showAuditDetailModal && _auditDetailLog != null)
+                {
+                    <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+                        <div class="modal-dialog modal-dialog-centered">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">@GetAuditActionType(_auditDetailLog.ActionType)</h5>
+                                    <button type="button" class="btn-close" @onclick="CloseAuditDetail"></button>
+                                </div>
+                                <div class="modal-body small">
+                                    <p class="mb-1"><strong>@Loc["Audit_Timestamp"]:</strong> @_auditDetailLog.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</p>
+                                    <p class="mb-1"><strong>@Loc["Audit_Actor"]:</strong> @_auditDetailLog.ActorEmail (@_auditDetailLog.ActorRole)</p>
+                                    <p class="mb-1"><strong>@Loc["Audit_Target"]:</strong> @(_auditDetailLog.TargetDescription ?? "-")</p>
+                                    <p class="mb-1"><strong>@Loc["Audit_IP"]:</strong> @(_auditDetailLog.IpAddress ?? "-")</p>
+                                    @if (!string.IsNullOrEmpty(_auditDetailLog.UserAgent))
+                                    {
+                                        <p class="mb-1"><strong>@Loc["Audit_UserAgent"]:</strong> <span class="text-break">@_auditDetailLog.UserAgent</span></p>
+                                    }
+                                    @if (!string.IsNullOrEmpty(_auditDetailLog.DetailsJson))
+                                    {
+                                        <p class="mb-1"><strong>@Loc["Audit_Details"]:</strong></p>
+                                        <pre class="bg-light p-2 rounded small mb-0" style="max-height: 200px; overflow: auto;">@FormatAuditDetails(_auditDetailLog.DetailsJson, _auditDetailLog.ActionType, Loc)</pre>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                break;
+            case "records":
+                <div class="row g-2 mb-3">
+                    <div class="col-md-2">
+                        <label class="form-label small">@Loc["Search_Poststed"]</label>
+                        <input type="text" class="form-control form-control-sm" @bind="_recordsPoststed" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">@Loc["Search_Stempeltekst"]</label>
+                        <input type="text" class="form-control form-control-sm" @bind="_recordsStempeltekst" />
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">@Loc["Search_Fylke"]</label>
+                        <select class="form-select form-select-sm" @bind="_recordsFylkeId">
+                            <option value="">@Loc["Search_All"]</option>
+                            @foreach (var f in _recordsDropdowns.Fylker)
+                            { <option value="@f.FylkeId">@f.FylkeNavn</option> }
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">@Loc["Search_Stempeltype"]</label>
+                        <select class="form-select form-select-sm" @bind="_recordsStempeltypeId">
+                            <option value="">@Loc["Search_All"]</option>
+                            @foreach (var s in _recordsDropdowns.Stempeltyper)
+                            { <option value="@s.StempeltypeId">@s.Hovedstempeltype</option> }
+                        </select>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end gap-1">
+                        <button type="button" class="btn btn-primary btn-sm" @onclick="SearchRecords" disabled="@_recordsLoading">@(_recordsLoading ? Loc["Search_Searching"] : Loc["Search_Button"])</button>
+                        <a class="btn btn-success btn-sm" href="@GetPath("admin/record/create")">@Loc["Admin_CreateRecord"]</a>
+                    </div>
+                </div>
+                @if (_recordsResult?.Result != null)
+                {
+                    var recordsPaged = _recordsResult.Result;
+                    <p class="text-muted small">@string.Format(Loc["Admin_RecordCount"].Value, recordsPaged.TotalCount)</p>
+                    <div class="mb-2">
+                        <button type="button" class="btn btn-danger btn-sm" disabled="@(_recordsSelectedIds.Count == 0 || _recordsDeleting)" @onclick="ConfirmBulkDeleteRecords">@string.Format(Loc["Admin_DeleteSelected"].Value, _recordsSelectedIds.Count)</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped table-bordered admin-records-table">
+                            <thead class="table-light">
+                                <tr>
+                                    <th><input type="checkbox" checked="@(_recordsSelectedIds.Count == recordsPaged.Items.Count && recordsPaged.Items.Count > 0)" @onchange="ToggleSelectAllRecords" /></th>
+                                    <th>@Loc["Common_Thumbnail"]</th>
+                                    <th>@Loc["Search_Poststed"]</th>
+                                    <th>@Loc["Search_Stempeltekst"]</th>
+                                    <th>@Loc["Search_Kommune"]</th>
+                                    <th>@Loc["Search_Stempeltype"]</th>
+                                    <th>@Loc["Common_FirstLastKnown"]</th>
+                                    <th>@Loc["Common_Actions"]</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var r in recordsPaged.Items)
+                                {
+                                    <tr>
+                                        <td><input type="checkbox" checked="@_recordsSelectedIds.Contains(r.StempelId)" @onchange="() => ToggleRecordSelection(r.StempelId)" /></td>
+                                        <td>
+                                            @if (!string.IsNullOrEmpty(r.ThumbnailUrl))
+                                            {
+                                                <button type="button" class="btn btn-link p-0 border-0" @onclick="() => OpenRecordDetailModal(r.StempelId)" title="@Loc["Common_ViewPostmarkDetails"]">
+                                                    <img src="@r.ThumbnailUrl" alt="" width="40" height="40" class="rounded" />
+                                                </button>
+                                            }
+                                            else
+                                            {
+                                                <button type="button" class="btn btn-link p-0 border-0 text-muted small" @onclick="() => OpenRecordDetailModal(r.StempelId)">@Loc["Common_NoImage"]</button>
+                                            }
+                                        </td>
+                                        <td><strong>@r.PoststedNavn</strong></td>
+                                        <td>@r.StempeltekstOppe</td>
+                                        <td>@r.KommuneNavn</td>
+                                        <td>@(r.StempeltypeCode ?? r.StempeltypeFullTekst ?? "—")</td>
+                                        <td>@(r.FirstKnownDate ?? "—") / @(r.LastKnownDate ?? "—")</td>
+                                        <td>
+                                            <a class="btn btn-sm btn-outline-primary me-1" href="@GetPath($"admin/record/edit/{r.StempelId}")">@Loc["Common_Edit"]</a>
+                                            <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDeleteRecord(r.StempelId)" disabled="@_recordsDeleting">@Loc["Common_Delete"]</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
+                        <span class="text-muted small">@string.Format(Loc["Admin_PageOfRecords"].Value, _recordsPage, GetRecordsTotalPages(), _recordsResult?.Result?.TotalCount ?? 0)</span>
+                        <div class="btn-group btn-group-sm">
+                            <button type="button" class="btn btn-outline-secondary" disabled="@(_recordsPage <= 1 || _recordsLoading)" @onclick="RecordsFirstPage">@Loc["Common_First"]</button>
+                            <button type="button" class="btn btn-outline-secondary" disabled="@(_recordsPage <= 1 || _recordsLoading)" @onclick="RecordsPrevPage">@Loc["Common_Prev"]</button>
+                            <button type="button" class="btn btn-outline-secondary" disabled="@(_recordsPage >= GetRecordsTotalPages() || _recordsLoading)" @onclick="RecordsNextPage">@Loc["Common_Next"]</button>
+                            <button type="button" class="btn btn-outline-secondary" disabled="@(_recordsPage >= GetRecordsTotalPages() || _recordsLoading)" @onclick="RecordsLastPage">@Loc["Common_Last"]</button>
+                        </div>
+                    </div>
+                    @if (_showRecordDeleteConfirm && _recordToDeleteStempelId.HasValue)
+                    {
+                        <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+                            <div class="modal-dialog">
+                                <div class="modal-content">
+                                    <div class="modal-header"><h5 class="modal-title">@Loc["Modal_ConfirmDelete"]</h5><button type="button" class="btn-close" @onclick="CancelDeleteRecord"></button></div>
+                                    <div class="modal-body">@Loc["Modal_DeleteRecordConfirm"]</div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" @onclick="CancelDeleteRecord">@Loc["RecordEdit_Cancel"]</button>
+                                        <button type="button" class="btn btn-danger" @onclick="DoDeleteRecord">@Loc["Common_Delete"]</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                    @if (_showBulkDeleteConfirm)
+                    {
+                        <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+                            <div class="modal-dialog">
+                                <div class="modal-content">
+                                    <div class="modal-header"><h5 class="modal-title">@Loc["Modal_ConfirmDelete"]</h5><button type="button" class="btn-close" @onclick="CancelBulkDeleteRecords"></button></div>
+                                    <div class="modal-body">@string.Format(Loc["Modal_DeleteRecordsConfirm"].Value, _recordsSelectedIds.Count)</div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" @onclick="CancelBulkDeleteRecords">@Loc["RecordEdit_Cancel"]</button>
+                                        <button type="button" class="btn btn-danger" @onclick="DoBulkDeleteRecords">@Loc["Common_Delete"]</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                }
+                <hr class="my-3" />
+                <h6 class="mb-2">@Loc["Admin_BatchImport"]</h6>
+                <p class="small text-muted">@Loc["Admin_BatchImportHelp"]</p>
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <InputFile Accept=".xlsx" OnChange="OnBatchFileSelected" class="form-control form-control-sm" style="max-width: 280px;" />
+                    <button type="button" class="btn btn-secondary btn-sm" @onclick="RunBatchImport" disabled="@(_batchFile == null || _batchImporting)">@(_batchImporting ? Loc["Common_Importing"] : Loc["Common_Import"])</button>
+                </div>
+                @if (_batchResult != null)
+                {
+                    <p class="small mb-0">@string.Format(Loc["Admin_ImportedSkipped"].Value, _batchResult.Imported, _batchResult.Skipped) @( _batchResult.Errors.Count > 0 ? Loc["Admin_Errors"].Value + string.Join("; ", _batchResult.Errors.Take(5)) : "" )</p>
+                }
+                break;
+            case "subcategories":
+                <p class="text-muted small">@Loc["Admin_ManageSubcategories"]</p>
+                <div class="mb-2">
+                    <button type="button" class="btn btn-primary btn-sm" @onclick="OpenSubcategoryCreate">@Loc["Admin_AddSubcategory"]</button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered">
+                        <thead class="table-light">
+                            <tr><th>@Loc["Admin_StampType"]</th><th>@Loc["Admin_Code"]</th><th>@Loc["Admin_FullText"]</th><th>@Loc["Common_Actions"]</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var sc in _subcategoriesList)
+                            {
+                                <tr>
+                                    <td>@(sc.Hovedstempeltype ?? "-")</td>
+                                    <td>@sc.Underkategori</td>
+                                    <td>@(sc.UnderkategoriFullTekst ?? "-")</td>
+                                    <td>
+                                        <button type="button" class="btn btn-sm btn-outline-primary me-1" @onclick="() => OpenSubcategoryEdit(sc)">@Loc["Common_Edit"]</button>
+                                        <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => DeleteSubcategory(sc)" disabled="@_subcategorySaving">@Loc["Common_Delete"]</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                @if (_showSubcategoryModal)
+                {
+                    <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5);">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header"><h5 class="modal-title">@(_editingSubcategory == null ? Loc["Admin_AddSubcategory"] : Loc["Admin_EditSubcategory"])</h5><button type="button" class="btn-close" @onclick="CloseSubcategoryModal"></button></div>
+                                <div class="modal-body">
+                                    <div class="mb-2"><label class="form-label">@Loc["Admin_StampType"]</label><select class="form-select" @bind="_subcategoryStempeltypeId" disabled="@(_editingSubcategory != null)"><option value="0">@Loc["Common_Select"]</option>@foreach (var s in _recordsDropdowns.Stempeltyper) { <option value="@s.StempeltypeId">@s.Hovedstempeltype</option> }</select></div>
+                                    <div class="mb-2"><label class="form-label">@Loc["Admin_CodeUnderkategori"]</label><input type="text" class="form-control" @bind="_subcategoryCode" maxlength="10" /></div>
+                                    <div class="mb-2"><label class="form-label">@Loc["Admin_FullText"]</label><input type="text" class="form-control" @bind="_subcategoryFullTekst" maxlength="100" /></div>
+                                    @if (!string.IsNullOrEmpty(_subcategoryError)) { <p class="text-danger small">@_subcategoryError</p> }
+                                </div>
+                                <div class="modal-footer"><button type="button" class="btn btn-secondary" @onclick="CloseSubcategoryModal">@Loc["RecordEdit_Cancel"]</button><button type="button" class="btn btn-primary" @onclick="SaveSubcategory" disabled="@_subcategorySaving">@Loc["Profile_Save"]</button></div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                break;
+            case "stamptypes":
+                <p class="text-muted small">@Loc["Admin_CreateStampTypeIntro"]</p>
+                <div class="row g-2 mb-2" style="max-width: 500px;">
+                    <div class="col-md-6"><label class="form-label">@Loc["Admin_Code"] (hovedstempeltype)</label><input type="text" class="form-control" @bind="_newStampTypeCode" maxlength="10" placeholder="@Loc["Common_PlaceholderEgS"]" /></div>
+                    <div class="col-md-6"><label class="form-label">@Loc["Admin_FullText"]</label><input type="text" class="form-control" @bind="_newStampTypeFullTekst" maxlength="100" placeholder="e.g. Stålstempel" /></div>
+                </div>
+                <div class="mb-2"><button type="button" class="btn btn-primary btn-sm" @onclick="CreateStampType" disabled="@(string.IsNullOrWhiteSpace(_newStampTypeCode) || string.IsNullOrWhiteSpace(_newStampTypeFullTekst) || _stampTypeSaving)">@Loc["Admin_CreateStampType"]</button></div>
+                @if (!string.IsNullOrEmpty(_stampTypeMessage)) { <p class="small @(_stampTypeError ? "text-danger" : "text-success")">@_stampTypeMessage</p> }
+                break;
+            default:
+                <p class="card-text mb-0">@Loc["Admin_SelectTab"]</p>
+                break;
+        }
+    </div>
+</div>
+
+@* Record detail modal *@
+@if (_recordDetailModalId.HasValue)
+{
+    <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.7);" @onclick="CloseRecordDetailModal">
+        <div class="modal-dialog modal-dialog-centered modal-lg" @onclick:stopPropagation>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@Loc["Modal_PostmarkDetails"]</h5>
+                    <button type="button" class="btn-close" @onclick="CloseRecordDetailModal"></button>
+                </div>
+                <div class="modal-body">
+                    @if (_recordDetailModalLoading)
+                    {
+                        <p class="text-muted">@Loc["Common_Loading"]</p>
+                    }
+                    else if (_recordDetailModal != null)
+                    {
+                        <div class="d-flex gap-3 flex-wrap">
+                            @if (!string.IsNullOrEmpty(_recordDetailModal.ThumbnailUrl))
+                            {
+                                <div class="flex-shrink-0"><img src="@_recordDetailModal.ThumbnailUrl" alt="Postmark" class="rounded" style="max-width: 200px;" /></div>
+                            }
+                            <div class="flex-grow-1">
+                                <dl class="row mb-0 small">
+                                    <dt class="col-sm-4">@Loc["Search_Stempeltekst"]</dt>
+                                    <dd class="col-sm-8">@_recordDetailModal.StempeltekstOppe</dd>
+                                    <dt class="col-sm-4">@Loc["Search_Poststed"]</dt>
+                                    <dd class="col-sm-8">@_recordDetailModal.PoststedNavn</dd>
+                                    <dt class="col-sm-4">@Loc["Search_Kommune"]</dt>
+                                    <dd class="col-sm-8">@(_recordDetailModal.KommuneNavn ?? "—")</dd>
+                                    <dt class="col-sm-4">@Loc["Search_Fylke"]</dt>
+                                    <dd class="col-sm-8">@(_recordDetailModal.FylkeNavn ?? "—")</dd>
+                                    <dt class="col-sm-4">@Loc["Search_Stempeltype"]</dt>
+                                    <dd class="col-sm-8">@(_recordDetailModal.StempeltypeCode ?? _recordDetailModal.StempeltypeFullTekst ?? "—")</dd>
+                                    <dt class="col-sm-4">@Loc["Record_FirstLastKnownRecord"]</dt>
+                                    <dd class="col-sm-8">@(_recordDetailModal.FirstKnownDate ?? "—") / @(_recordDetailModal.LastKnownDate ?? "—")</dd>
+                                    @if (!string.IsNullOrEmpty(_recordDetailModal.Kommentar))
+                                    {
+                                        <dt class="col-sm-4">@Loc["Record_Kommentar"]</dt>
+                                        <dd class="col-sm-8">@_recordDetailModal.Kommentar</dd>
+                                    }
+                                </dl>
+                            </div>
+                        </div>
+                        @if (_recordDetailModal.UsagePeriods.Count > 0)
+                        {
+                            <h6 class="mt-3 mb-2">@Loc["Record_UsagePeriods"]</h6>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered">
+                                    <thead class="table-light"><tr><th>@Loc["Record_FirstKnown"]</th><th>@Loc["Record_LastKnown"]</th><th>@Loc["Record_Kommentarer"]</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var up in _recordDetailModal.UsagePeriods)
+                                        {
+                                            <tr>
+                                                <td>@(up.DatoFoersteKjenteBruksdato ?? "—")</td>
+                                                <td>@(up.DatoSisteKjenteBruksdato ?? "—")</td>
+                                                <td>@(up.Kommentarer ?? "—")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        <div class="mt-3 pt-2 border-top">
+                            <p class="mb-0 small d-flex flex-wrap align-items-center gap-2">
+                                <a href="@GetPath($"record/{_recordDetailModal.StempelId}")" target="_blank">@Loc["Record_OpenFullPage"]</a>
+                                <span class="text-muted">|</span>
+                                <a href="@GetPath($"admin/record/edit/{_recordDetailModal.StempelId}")">@Loc["Common_Edit"]</a>
+                                @if (_isApprovedReporter)
+                                {
+                                    <span class="text-muted">|</span>
+                                    <span role="button" tabindex="0" class="btn btn-sm btn-success" @onclick="OnSubmitReportClick" @onclick:preventDefault @onclick:stopPropagation @onkeydown="OnSubmitReportKeydown" @onkeydown:preventDefault @onkeydown:stopPropagation>Submit report</span>
+                                }
+                            </p>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="text-muted">@Loc["Record_NotFound"]</p>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@* Submit report modal *@
+@if (_showSubmitReportModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background: rgba(0,0,0,0.5); z-index: 1060;">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title">@Loc["Report_Submit"]</h5><button type="button" class="btn-close" @onclick="CloseSubmitReportModal"></button></div>
+                <div class="modal-body">
+                    <p class="small text-muted">@Loc["Report_Stamp"]: @_submitReportStempeltekst</p>
+                    <div class="mb-2"><label class="form-label">@Loc["Report_UsagePeriod"]</label><select class="form-select" @bind="_submitBruksperiodeId"><option value="0">@Loc["Common_Select"]…</option>@foreach (var up in _submitUsagePeriodOptions) { <option value="@up.BruksperiodeId">@up.DisplayText</option> }</select></div>
+                    <div class="mb-2"><label class="form-label">@Loc["Report_ReportingDate"]</label><InputDate class="form-control" @bind-Value="_submitRapporteringsdato" /></div>
+                    <div class="mb-2"><label class="form-label">@Loc["Report_ReportType"]</label><select class="form-select" @bind="_submitFoersteSiste"><option value="F">@Loc["Report_FirstKnownDate"]</option><option value="S">@Loc["Report_LastKnownDate"]</option></select></div>
+                    <div class="mb-2"><label class="form-label">@Loc["Report_DateOfImprint"]</label><InputText class="form-control" @bind-Value="_submitDatoAvtrykk" maxlength="15" /></div>
+                    <div class="mb-2"><label class="form-label">@Loc["Report_ImagesAtLeastOne"]</label><InputFile type="file" multiple accept="image/*" OnChange="OnAdminReportImagesChanged" class="form-control" /></div>
+                    @if (_submitReportError != null) { <p class="text-danger small">@_submitReportError</p> }
+                </div>
+                <div class="modal-footer"><button type="button" class="btn btn-secondary" @onclick="CloseSubmitReportModal">@Loc["RecordEdit_Cancel"]</button><button type="button" class="btn btn-primary" @onclick="SubmitReportRecord" disabled="@_submitReportLoading">@(_submitReportLoading ? Loc["Common_Submitting"] : Loc["Report_Submit"])</button></div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private const int AdminPageSize = 15;
+
+    private string GetPath(string relativePath) => $"/{LocaleService.GetCurrentLocale()}/{relativePath.TrimStart('/')}";
+
+    [Parameter]
+    public string Locale { get; set; } = "no";
+
+    [Parameter]
+    public string? Tab { get; set; }
+
+    private string? _currentUserRole;
+    private int _currentUserId;
+    private bool _isApprovedReporter;
+    private string? _auditActionType;
+    private string? _auditActorFilter;
+    private DateOnly? _auditDateFrom;
+    private DateOnly? _auditDateTo;
+    private List<AuditLogEntryDto> _auditLogs = new();
+    private int _auditPage = 1;
+    private int _auditTotalCount = 0;
+    private bool _auditLoading;
+    private List<UserListDto> _usersList = new();
+    private int _usersPage = 1;
+    private string _usersRoleFilter = "";
+    private string _usersSearchFilter = "";
+    private string _usersReporterFilter = "";
+    private bool _showEditModal;
+    private UserListDto? _editingUser;
+    private bool _showManageModal;
+    private UserListDto? _manageUser;
+    private string _editFirstName = "";
+    private string _editLastName = "";
+    private string _editEmail = "";
+    private string? _editUsername;
+    private string? _editTelephone;
+    private string? _userEditError;
+    private bool _showDeleteConfirm;
+    private UserListDto? _userToDelete;
+    private List<ReportDto> _reportsList = new();
+    private string? _reportsStatusFilter;
+    private int _reportsPage = 1;
+    private int _reportsTotalCount = 0;
+    private int _pendingReportsCount;
+    private int _pendingReportersCount;
+    private bool _showApproveModal;
+    private ReportDto? _reportAction;
+    private bool _reportActionApprove;
+    private string _reportInitialer = "";
+    private string? _reportKommentarer;
+    private bool _showReportDetailModal;
+    private ReportDto? _reportDetailView;
+    private bool _showAuditDetailModal;
+    private AuditLogEntryDto? _auditDetailLog;
+
+    private string _recordsPoststed = "";
+    private string _recordsStempeltekst = "";
+    private string _recordsFylkeId = "";
+    private string _recordsStempeltypeId = "";
+    private DropdownsDto _recordsDropdowns = new();
+    private SearchResponseDto? _recordsResult;
+    private int _recordsPage = 1;
+    private HashSet<int> _recordsSelectedIds = new();
+    private bool _recordsLoading;
+    private bool _recordsDeleting;
+    private bool _showRecordDeleteConfirm;
+    private int? _recordToDeleteStempelId;
+    private bool _showBulkDeleteConfirm;
+    private IBrowserFile? _batchFile;
+    private bool _batchImporting;
+    private BatchImportResultDto? _batchResult;
+    private List<SubcategoryDto> _subcategoriesList = new();
+    private bool _showSubcategoryModal;
+    private SubcategoryDto? _editingSubcategory;
+    private int _subcategoryStempeltypeId;
+    private string _subcategoryCode = "";
+    private string _subcategoryFullTekst = "";
+    private string? _subcategoryError;
+    private bool _subcategorySaving;
+    private string _newStampTypeCode = "";
+    private string _newStampTypeFullTekst = "";
+    private bool _stampTypeSaving;
+    private string? _stampTypeMessage;
+    private bool _stampTypeError;
+    private int? _recordDetailModalId;
+    private RecordDetailDto? _recordDetailModal;
+    private bool _recordDetailModalLoading;
+    private bool _showSubmitReportModal;
+    private int _submitStempelId;
+    private string? _submitReportStempeltekst;
+    private List<UsagePeriodOptionDto> _submitUsagePeriodOptions = new();
+    private int _submitBruksperiodeId;
+    private DateOnly _submitRapporteringsdato = DateOnly.FromDateTime(DateTime.Today);
+    private string _submitFoersteSiste = "F";
+    private string _submitDatoAvtrykk = "";
+    private List<string> _submitImagePaths = new();
+    private string? _submitReportError;
+    private bool _submitReportLoading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = await AuthService.GetCurrentUserAsync();
+        _currentUserRole = user?.Role;
+        _currentUserId = user?.UserId ?? 0;
+        _isApprovedReporter = false;
+        if (user != null)
+        {
+            var reporter = await ReporterService.GetByUserIdAsync(user.UserId);
+            _isApprovedReporter = !string.IsNullOrEmpty(reporter?.Status) && string.Equals(reporter.Status.Trim(), "approved", StringComparison.OrdinalIgnoreCase);
+        }
+        if (string.IsNullOrEmpty(Tab) || Tab is not ("records" or "reports" or "users" or "subcategories" or "stamptypes" or "audit"))
+            Tab = "records";
+        if (Tab == "audit" && _currentUserRole != "admin")
+        {
+            Navigation.NavigateTo(GetPath("admin/records"), replace: true);
+            return;
+        }
+        if (Tab == "audit" && _currentUserRole == "admin")
+            await LoadAuditLogs();
+        if (Tab == "users")
+            await LoadUsers();
+        if (Tab == "reports")
+            await LoadReports();
+        if (Tab == "records")
+            await LoadRecordsDropdowns();
+        await LoadPendingCounts();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Tab == "audit" && _currentUserRole != "admin")
+        {
+            Navigation.NavigateTo(GetPath("admin/records"), replace: true);
+            return;
+        }
+        if (Tab == "audit" && _currentUserRole == "admin" && _auditLogs.Count == 0 && !_auditLoading)
+            await LoadAuditLogs();
+        if (Tab == "users" && _usersList.Count == 0)
+            await LoadUsers();
+        if (Tab == "reports" && _reportsList.Count == 0 && _reportsStatusFilter == null)
+        {
+            await LoadReports();
+            await LoadPendingCounts();
+        }
+        if (Tab == "records" && _recordsDropdowns.Fylker.Count == 0)
+            await LoadRecordsDropdowns();
+        if (Tab == "subcategories")
+        {
+            if (_recordsDropdowns.Stempeltyper.Count == 0)
+                await LoadRecordsDropdowns();
+            await LoadSubcategoriesList();
+        }
+    }
+
+    private async Task LoadRecordsDropdowns()
+    {
+        _recordsDropdowns = await DropdownService.GetDropdownsAsync();
+    }
+
+    private async Task LoadPendingCounts()
+    {
+        _pendingReportsCount = await ReportingService.GetPendingReportCountAsync();
+        _pendingReportersCount = await AdminUserService.GetPendingReporterCountAsync();
+    }
+
+    private async Task LoadRecords()
+    {
+        _recordsLoading = true;
+        _recordsResult = null;
+        _recordsSelectedIds.Clear();
+        try
+        {
+            var request = new SearchRequest
+            {
+                Poststed = string.IsNullOrWhiteSpace(_recordsPoststed) ? null : _recordsPoststed.Trim(),
+                Stempeltekst = string.IsNullOrWhiteSpace(_recordsStempeltekst) ? null : _recordsStempeltekst.Trim(),
+                FylkeId = int.TryParse(_recordsFylkeId, out var fid) ? fid : null,
+                StempeltypeId = int.TryParse(_recordsStempeltypeId, out var sid) ? sid : null,
+                Page = _recordsPage,
+                PageSize = AdminPageSize
+            };
+            _recordsResult = await StampSearchService.SearchAsync(request);
+        }
+        finally
+        {
+            _recordsLoading = false;
+        }
+    }
+
+    private async Task RecordsGoToPage(int page)
+    {
+        if (page < 1) return;
+        _recordsPage = page;
+        await LoadRecords();
+    }
+
+    private Task RecordsFirstPage() => RecordsGoToPage(1);
+    private Task RecordsPrevPage() => RecordsGoToPage(_recordsPage - 1);
+    private Task RecordsNextPage() => RecordsGoToPage(_recordsPage + 1);
+    private async Task RecordsLastPage()
+    {
+        if (_recordsResult?.Result == null) return;
+        var total = _recordsResult.Result.TotalCount;
+        var totalPages = (total + AdminPageSize - 1) / AdminPageSize;
+        if (totalPages < 1) totalPages = 1;
+        await RecordsGoToPage(totalPages);
+    }
+
+    private async Task SearchRecords()
+    {
+        _recordsPage = 1;
+        await LoadRecords();
+    }
+
+    private int GetRecordsTotalPages()
+    {
+        var total = _recordsResult?.Result?.TotalCount ?? 0;
+        var t = (total + AdminPageSize - 1) / AdminPageSize;
+        return t < 1 ? 1 : t;
+    }
+
+    private int GetReportsTotalPages()
+    {
+        var t = (_reportsTotalCount + AdminPageSize - 1) / AdminPageSize;
+        return t < 1 ? 1 : t;
+    }
+
+    private static bool UserMatchesSearch(UserListDto u, string term)
+    {
+        if (u.FirstName != null && u.FirstName.ToLowerInvariant().Contains(term)) return true;
+        if (u.MiddleName != null && u.MiddleName.ToLowerInvariant().Contains(term)) return true;
+        if (u.LastName != null && u.LastName.ToLowerInvariant().Contains(term)) return true;
+        if (u.Email != null && u.Email.ToLowerInvariant().Contains(term)) return true;
+        if (u.Username != null && u.Username.ToLowerInvariant().Contains(term)) return true;
+        var fullName = string.Join(" ", new[] { u.FirstName ?? "", u.MiddleName ?? "", u.LastName ?? "" }.Where(s => !string.IsNullOrWhiteSpace(s))).Trim().ToLowerInvariant();
+        return fullName.Contains(term);
+    }
+
+    private IEnumerable<UserListDto> GetUsersFiltered()
+    {
+        var q = _usersList.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(_usersRoleFilter))
+        {
+            var role = _usersRoleFilter.Trim();
+            q = q.Where(u => string.Equals(u.Role, role, StringComparison.OrdinalIgnoreCase));
+        }
+        if (!string.IsNullOrWhiteSpace(_usersSearchFilter))
+        {
+            var term = _usersSearchFilter.Trim().ToLowerInvariant();
+            q = q.Where(u => UserMatchesSearch(u, term));
+        }
+        if (!string.IsNullOrWhiteSpace(_usersReporterFilter))
+        {
+            var rep = _usersReporterFilter.Trim().ToLowerInvariant();
+            q = rep switch
+            {
+                "none" => q.Where(u => string.IsNullOrEmpty(u.ReporterStatus)),
+                "pending" => q.Where(u => string.Equals(u.ReporterStatus, "pending", StringComparison.OrdinalIgnoreCase)),
+                "approved" => q.Where(u => string.Equals(u.ReporterStatus, "approved", StringComparison.OrdinalIgnoreCase)),
+                "rejected" => q.Where(u => string.Equals(u.ReporterStatus, "rejected", StringComparison.OrdinalIgnoreCase)),
+                _ => q
+            };
+        }
+        return q;
+    }
+
+    private int GetUsersTotalPages()
+    {
+        var count = GetUsersFiltered().Count();
+        var t = (count + AdminPageSize - 1) / AdminPageSize;
+        return t < 1 ? 1 : t;
+    }
+
+    private int GetUsersCurrentPage()
+    {
+        return Math.Min(_usersPage, GetUsersTotalPages());
+    }
+
+    private List<UserListDto> GetUsersPaged()
+    {
+        var filtered = GetUsersFiltered().ToList();
+        int totalPages = (filtered.Count + AdminPageSize - 1) / AdminPageSize;
+        if (totalPages < 1) totalPages = 1;
+        int page = Math.Min(_usersPage, totalPages);
+        return filtered.Skip((page - 1) * AdminPageSize).Take(AdminPageSize).ToList();
+    }
+
+    private void ApplyUsersFilters()
+    {
+        _usersPage = 1;
+        StateHasChanged();
+    }
+
+    private void ClearUsersFilters()
+    {
+        _usersRoleFilter = "";
+        _usersSearchFilter = "";
+        _usersReporterFilter = "";
+        _usersPage = 1;
+        StateHasChanged();
+    }
+
+    private int GetAuditTotalPages()
+    {
+        var t = (_auditTotalCount + AdminPageSize - 1) / AdminPageSize;
+        return t < 1 ? 1 : t;
+    }
+
+    private async Task OpenRecordDetailModal(int stempelId)
+    {
+        _recordDetailModalId = stempelId;
+        _recordDetailModal = null;
+        _recordDetailModalLoading = true;
+        StateHasChanged();
+        try
+        {
+            _recordDetailModal = await StampSearchService.GetByIdAsync(stempelId);
+        }
+        finally
+        {
+            _recordDetailModalLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseRecordDetailModal()
+    {
+        _recordDetailModalId = null;
+        _recordDetailModal = null;
+    }
+
+    private async Task OnSubmitReportClick()
+    {
+        await OpenSubmitReportFromDetailModal();
+    }
+
+    private async Task OnSubmitReportKeydown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" || e.Key == " ")
+            await OpenSubmitReportFromDetailModal();
+    }
+
+    private async Task OpenSubmitReportFromDetailModal()
+    {
+        if (_recordDetailModal == null) return;
+        var stempelId = _recordDetailModal.StempelId;
+        var stempeltekst = _recordDetailModal.StempeltekstOppe ?? "";
+        try
+        {
+            _submitStempelId = stempelId;
+            _submitReportStempeltekst = stempeltekst;
+            _submitUsagePeriodOptions = (await ReportingService.GetUsagePeriodsForStampAsync(stempelId)).ToList();
+            _submitBruksperiodeId = _submitUsagePeriodOptions.FirstOrDefault()?.BruksperiodeId ?? 0;
+            _submitRapporteringsdato = DateOnly.FromDateTime(DateTime.Today);
+            _submitFoersteSiste = "F";
+            _submitDatoAvtrykk = "";
+            _submitImagePaths = new List<string>();
+            _submitReportError = null;
+            _showSubmitReportModal = true;
+            // Keep detail modal open; show submit modal on top
+        }
+        finally
+        {
+            StateHasChanged();
+        }
+    }
+
+    private async Task OpenSubmitReportRecord(SearchResultDto r)
+    {
+        _submitStempelId = r.StempelId;
+        _submitReportStempeltekst = r.StempeltekstOppe;
+        _submitUsagePeriodOptions = (await ReportingService.GetUsagePeriodsForStampAsync(r.StempelId)).ToList();
+        _submitBruksperiodeId = _submitUsagePeriodOptions.FirstOrDefault()?.BruksperiodeId ?? 0;
+        _submitRapporteringsdato = DateOnly.FromDateTime(DateTime.Today);
+        _submitFoersteSiste = "F";
+        _submitDatoAvtrykk = "";
+        _submitImagePaths = new List<string>();
+        _submitReportError = null;
+        _showSubmitReportModal = true;
+    }
+
+    private async Task OnAdminReportImagesChanged(InputFileChangeEventArgs e)
+    {
+        _submitImagePaths = new List<string>();
+        foreach (var file in e.GetMultipleFiles(10))
+        {
+            try
+            {
+                await using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+                var path = await ImageStorage.UploadAsync(stream, file.Name, "report");
+                _submitImagePaths.Add(path);
+            }
+            catch { }
+        }
+    }
+
+    private async Task SubmitReportRecord()
+    {
+        _submitReportError = null;
+        if (_submitBruksperiodeId <= 0) { _submitReportError = "Select a usage period."; return; }
+        if (string.IsNullOrWhiteSpace(_submitDatoAvtrykk)) { _submitReportError = "Date of imprint is required."; return; }
+        if (_submitImagePaths.Count == 0) { _submitReportError = "At least one image is required."; return; }
+        var user = await AuthService.GetCurrentUserAsync();
+        if (user == null) { _submitReportError = "Not logged in."; return; }
+        var reporter = await ReporterService.GetByUserIdAsync(user.UserId);
+        if (reporter == null || !string.Equals(reporter.Status?.Trim(), "approved", StringComparison.OrdinalIgnoreCase)) { _submitReportError = "You must be an approved reporter."; return; }
+        _submitReportLoading = true;
+        try
+        {
+            var req = new ReportSubmitRequest
+            {
+                StempelId = _submitStempelId,
+                BruksperiodeId = _submitBruksperiodeId,
+                Rapporteringsdato = _submitRapporteringsdato,
+                RapporteringFoersteSisteDato = _submitFoersteSiste,
+                DatoForRapportertAvtrykk = _submitDatoAvtrykk.Trim(),
+                ImagePaths = _submitImagePaths
+            };
+            var id = await ReportingService.SubmitReportAsync(reporter.RapportoerId, req);
+            if (id.HasValue)
+            {
+                CloseSubmitReportModal();
+                CloseRecordDetailModal();
+            }
+            else
+                _submitReportError = "Submit failed.";
+        }
+        finally { _submitReportLoading = false; }
+    }
+
+    private void CloseSubmitReportModal()
+    {
+        _showSubmitReportModal = false;
+    }
+
+    private void ToggleRecordSelection(int stempelId)
+    {
+        if (_recordsSelectedIds.Contains(stempelId))
+            _recordsSelectedIds.Remove(stempelId);
+        else
+            _recordsSelectedIds.Add(stempelId);
+    }
+
+    private void ToggleSelectAllRecords(ChangeEventArgs e)
+    {
+        if (_recordsResult?.Result?.Items == null) return;
+        var on = e.Value as bool? ?? false;
+        if (on)
+            foreach (var r in _recordsResult.Result.Items)
+                _recordsSelectedIds.Add(r.StempelId);
+        else
+            _recordsSelectedIds.Clear();
+    }
+
+    private void ConfirmDeleteRecord(int stempelId)
+    {
+        _recordToDeleteStempelId = stempelId;
+        _showRecordDeleteConfirm = true;
+    }
+
+    private void CancelDeleteRecord()
+    {
+        _showRecordDeleteConfirm = false;
+        _recordToDeleteStempelId = null;
+    }
+
+    private async Task DoDeleteRecord()
+    {
+        if (!_recordToDeleteStempelId.HasValue) return;
+        var id = _recordToDeleteStempelId.Value;
+        CancelDeleteRecord();
+        await DeleteRecord(id);
+    }
+
+    private async Task DeleteRecord(int stempelId)
+    {
+        _recordsDeleting = true;
+        try
+        {
+            var (ok, _) = await RecordService.DeleteAsync(stempelId);
+            if (ok)
+            {
+                _recordsSelectedIds.Remove(stempelId);
+                await LoadRecords();
+            }
+        }
+        finally
+        {
+            _recordsDeleting = false;
+        }
+    }
+
+    private void ConfirmBulkDeleteRecords()
+    {
+        if (_recordsSelectedIds.Count == 0) return;
+        _showBulkDeleteConfirm = true;
+    }
+
+    private void CancelBulkDeleteRecords()
+    {
+        _showBulkDeleteConfirm = false;
+    }
+
+    private async Task DoBulkDeleteRecords()
+    {
+        CancelBulkDeleteRecords();
+        await BulkDeleteRecords();
+    }
+
+    private async Task BulkDeleteRecords()
+    {
+        if (_recordsSelectedIds.Count == 0) return;
+        _recordsDeleting = true;
+        try
+        {
+            var (deleted, errors) = await RecordService.BulkDeleteAsync(_recordsSelectedIds.ToList());
+            if (errors.Count > 0)
+                foreach (var err in errors) { }
+            _recordsSelectedIds.Clear();
+            await LoadRecords();
+        }
+        finally
+        {
+            _recordsDeleting = false;
+        }
+    }
+
+    private void OnBatchFileSelected(InputFileChangeEventArgs e)
+    {
+        _batchFile = e.File;
+        _batchResult = null;
+    }
+
+    private async Task RunBatchImport()
+    {
+        if (_batchFile == null) return;
+        _batchImporting = true;
+        _batchResult = null;
+        try
+        {
+            await using var stream = _batchFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            _batchResult = await BatchImportService.ProcessExcelAsync(stream);
+            _batchFile = null;
+        }
+        finally
+        {
+            _batchImporting = false;
+        }
+    }
+
+    private async Task LoadSubcategoriesList()
+    {
+        _subcategoriesList = (await SubcategoryService.GetAllAsync()).ToList();
+    }
+
+    private void OpenSubcategoryCreate()
+    {
+        _editingSubcategory = null;
+        _subcategoryStempeltypeId = _recordsDropdowns.Stempeltyper.FirstOrDefault()?.StempeltypeId ?? 0;
+        _subcategoryCode = "";
+        _subcategoryFullTekst = "";
+        _subcategoryError = null;
+        _showSubcategoryModal = true;
+    }
+
+    private void OpenSubcategoryEdit(SubcategoryDto sc)
+    {
+        _editingSubcategory = sc;
+        _subcategoryStempeltypeId = sc.StempeltypeId;
+        _subcategoryCode = sc.Underkategori;
+        _subcategoryFullTekst = sc.UnderkategoriFullTekst ?? "";
+        _subcategoryError = null;
+        _showSubcategoryModal = true;
+    }
+
+    private void CloseSubcategoryModal()
+    {
+        _showSubcategoryModal = false;
+        _editingSubcategory = null;
+    }
+
+    private async Task SaveSubcategory()
+    {
+        _subcategoryError = null;
+        if (_subcategoryStempeltypeId <= 0) { _subcategoryError = "Select stamp type."; return; }
+        if (string.IsNullOrWhiteSpace(_subcategoryCode)) { _subcategoryError = "Code is required."; return; }
+        _subcategorySaving = true;
+        try
+        {
+            if (_editingSubcategory == null)
+            {
+                var (ok, _, err) = await SubcategoryService.CreateAsync(new SubcategoryCreateRequest { StempeltypeId = _subcategoryStempeltypeId, Underkategori = _subcategoryCode.Trim(), UnderkategoriFullTekst = string.IsNullOrWhiteSpace(_subcategoryFullTekst) ? null : _subcategoryFullTekst.Trim() });
+                if (ok) { CloseSubcategoryModal(); await LoadSubcategoriesList(); } else _subcategoryError = err;
+            }
+            else
+            {
+                var (ok, err) = await SubcategoryService.UpdateAsync(_editingSubcategory.UnderkategoriId, new SubcategoryUpdateRequest { Underkategori = _subcategoryCode.Trim(), UnderkategoriFullTekst = string.IsNullOrWhiteSpace(_subcategoryFullTekst) ? null : _subcategoryFullTekst.Trim() });
+                if (ok) { CloseSubcategoryModal(); await LoadSubcategoriesList(); } else _subcategoryError = err;
+            }
+        }
+        finally { _subcategorySaving = false; }
+    }
+
+    private async Task DeleteSubcategory(SubcategoryDto sc)
+    {
+        _subcategorySaving = true;
+        try
+        {
+            var (ok, err) = await SubcategoryService.DeleteAsync(sc.UnderkategoriId);
+            if (ok) await LoadSubcategoriesList(); else _subcategoryError = err;
+        }
+        finally { _subcategorySaving = false; }
+    }
+
+    private async Task CreateStampType()
+    {
+        if (string.IsNullOrWhiteSpace(_newStampTypeCode) || string.IsNullOrWhiteSpace(_newStampTypeFullTekst)) return;
+        _stampTypeSaving = true;
+        _stampTypeMessage = null;
+        _stampTypeError = false;
+        try
+        {
+            var (ok, _, err) = await StampTypeService.CreateAsync(_newStampTypeCode.Trim(), _newStampTypeFullTekst.Trim());
+            if (ok)
+            {
+                _stampTypeMessage = "Stamp type created.";
+                _newStampTypeCode = "";
+                _newStampTypeFullTekst = "";
+                _recordsDropdowns = await DropdownService.GetDropdownsAsync();
+            }
+            else { _stampTypeMessage = err; _stampTypeError = true; }
+        }
+        finally { _stampTypeSaving = false; }
+    }
+
+    private async Task LoadReports()
+    {
+        if (_currentUserRole != "admin" && _currentUserRole != "superuser") { _reportsList = new List<ReportDto>(); _reportsTotalCount = 0; return; }
+        _reportsTotalCount = await ReportingService.GetReportsCountAsync(null, null, _reportsStatusFilter);
+        var offset = (_reportsPage - 1) * AdminPageSize;
+        _reportsList = (await ReportingService.GetReportsAsync(null, null, _reportsStatusFilter, AdminPageSize, offset)).ToList();
+    }
+
+    private async Task ReportsGoToPage(int page)
+    {
+        if (page < 1) return;
+        _reportsPage = page;
+        await LoadReports();
+    }
+
+    private Task ReportsFirstPage() => ReportsGoToPage(1);
+    private Task ReportsPrevPage() => ReportsGoToPage(_reportsPage - 1);
+    private Task ReportsNextPage() => ReportsGoToPage(_reportsPage + 1);
+    private async Task ReportsLastPage()
+    {
+        var totalPages = (_reportsTotalCount + AdminPageSize - 1) / AdminPageSize;
+        if (totalPages < 1) totalPages = 1;
+        await ReportsGoToPage(totalPages);
+    }
+
+    private async Task OnReportsFilterChanged()
+    {
+        _reportsPage = 1;
+        await LoadReports();
+    }
+
+    private bool CanApproveRejectReport(ReportDto r)
+    {
+        if (r.SubmitterRole?.ToLowerInvariant() == "superuser" && _currentUserRole?.ToLowerInvariant() != "admin") return false;
+        return true;
+    }
+
+    private void OpenReportDetail(ReportDto r)
+    {
+        _reportDetailView = r;
+        _showReportDetailModal = true;
+    }
+
+    private void CloseReportDetailModal()
+    {
+        _showReportDetailModal = false;
+        _reportDetailView = null;
+    }
+
+    private void OpenApproveReport(ReportDto r)
+    {
+        _reportAction = r;
+        _reportActionApprove = true;
+        _reportInitialer = "";
+        _reportKommentarer = null;
+        _showApproveModal = true;
+    }
+
+    private void OpenRejectReport(ReportDto r)
+    {
+        _reportAction = r;
+        _reportActionApprove = false;
+        _reportInitialer = "";
+        _showApproveModal = true;
+    }
+
+    private void CloseReportModal()
+    {
+        _showApproveModal = false;
+        _reportAction = null;
+    }
+
+    private async Task SubmitReportAction()
+    {
+        if (_reportAction == null || string.IsNullOrWhiteSpace(_reportInitialer)) return;
+        if (_reportActionApprove)
+            await ReportingService.ApproveReportAsync(_reportAction.RapporteringshistorikkId, _reportInitialer.Trim(), _reportKommentarer, _currentUserId);
+        else
+            await ReportingService.RejectReportAsync(_reportAction.RapporteringshistorikkId, _reportInitialer.Trim(), _currentUserId);
+        var me = await AuthService.GetCurrentUserAsync();
+        var targetDesc = $"{_reportAction.StempeltekstOppe} – {_reportAction.RapportoerInitialer}";
+        var actionType = _reportActionApprove ? "report_approved" : "report_rejected";
+        await AuditService.LogAsync(_currentUserId, me?.Email ?? "", _currentUserRole ?? "", actionType, "REPORT", _reportAction.RapporteringshistorikkId, targetDesc, null);
+        CloseReportModal();
+        await LoadReports();
+        await LoadPendingCounts();
+    }
+
+    private async Task LoadUsers()
+    {
+        _usersList = (await AdminUserService.GetAllUsersAsync()).ToList();
+        var totalPages = (_usersList.Count + AdminPageSize - 1) / AdminPageSize;
+        if (totalPages < 1) totalPages = 1;
+        if (_usersPage > totalPages) _usersPage = totalPages;
+    }
+
+    private void UsersGoToPage(int page)
+    {
+        if (page < 1) return;
+        _usersPage = page;
+        StateHasChanged();
+    }
+
+    private void UsersFirstPage() => UsersGoToPage(1);
+    private void UsersPrevPage() => UsersGoToPage(_usersPage - 1);
+    private void UsersNextPage()
+    {
+        var totalPages = (_usersList.Count + AdminPageSize - 1) / AdminPageSize;
+        if (totalPages < 1) totalPages = 1;
+        UsersGoToPage(_usersPage + 1);
+    }
+    private void UsersLastPage()
+    {
+        var totalPages = (_usersList.Count + AdminPageSize - 1) / AdminPageSize;
+        if (totalPages < 1) totalPages = 1;
+        UsersGoToPage(totalPages);
+    }
+
+    private bool CanManageReporter(UserListDto u)
+    {
+        if (u.ReporterStatus != "pending" && u.ReporterStatus != "rejected") return false;
+        if (u.Role?.ToLowerInvariant() == "superuser" && _currentUserRole?.ToLowerInvariant() != "admin") return false;
+        return true;
+    }
+
+    private bool CanRevokeReporter(UserListDto u)
+    {
+        if (u.ReporterStatus != "approved") return false;
+        if (u.Role?.ToLowerInvariant() == "superuser" && _currentUserRole?.ToLowerInvariant() != "admin") return false;
+        return true;
+    }
+
+    private void OpenManageUser(UserListDto u)
+    {
+        _manageUser = u;
+        _showManageModal = true;
+    }
+
+    private void CloseManageUser()
+    {
+        _showManageModal = false;
+        _manageUser = null;
+    }
+
+    private void RefreshManageUserIfOpen()
+    {
+        if (_showManageModal && _manageUser != null)
+            _manageUser = _usersList.FirstOrDefault(x => x.UserId == _manageUser.UserId);
+    }
+
+    private void OpenEditUser(UserListDto u)
+    {
+        _editingUser = u;
+        _editFirstName = u.FirstName;
+        _editLastName = u.LastName;
+        _editEmail = u.Email;
+        _editUsername = u.Username;
+        _editTelephone = u.Telephone;
+        _userEditError = null;
+        _showEditModal = true;
+    }
+
+    private void CloseEditUser()
+    {
+        _showEditModal = false;
+        _editingUser = null;
+    }
+
+    private async Task SaveEditUser()
+    {
+        if (_editingUser == null) return;
+        _userEditError = null;
+        var req = new UserUpdateRequest { FirstName = _editFirstName, LastName = _editLastName, Email = _editEmail, Username = _editUsername, Telephone = _editTelephone };
+        var ok = await AdminUserService.UpdateUserAsync(_editingUser.UserId, req, _currentUserId);
+        if (ok) { CloseEditUser(); await LoadUsers(); } else _userEditError = Loc["Admin_UpdateFailedHint"].Value;
+    }
+
+    private void ConfirmDeleteUser(UserListDto u)
+    {
+        _userToDelete = u;
+        _showDeleteConfirm = true;
+    }
+
+    private async Task DoDeleteUser()
+    {
+        if (_userToDelete == null) return;
+        await AdminUserService.DeleteUserAsync(_userToDelete.UserId, _currentUserId);
+        _showDeleteConfirm = false;
+        _userToDelete = null;
+        await LoadUsers();
+    }
+
+    private async Task SaveRole(UserListDto u)
+    {
+        await AdminUserService.UpdateUserRoleAsync(u.UserId, u.Role, _currentUserId);
+        await LoadUsers();
+        RefreshManageUserIfOpen();
+    }
+
+    private async Task ApproveReporter(UserListDto u)
+    {
+        if (u.RapportoerId == null) return;
+        await ReporterService.ApproveAsync(u.RapportoerId.Value);
+        var me = await AuthService.GetCurrentUserAsync();
+        await AuditService.LogAsync(_currentUserId, me?.Email ?? "", _currentUserRole ?? "", "reporter_approved", "USER", u.UserId, u.Email, null);
+        await LoadUsers();
+        RefreshManageUserIfOpen();
+        await LoadPendingCounts();
+    }
+
+    private async Task RejectReporter(UserListDto u)
+    {
+        if (u.RapportoerId == null) return;
+        await ReporterService.RejectAsync(u.RapportoerId.Value);
+        var me = await AuthService.GetCurrentUserAsync();
+        await AuditService.LogAsync(_currentUserId, me?.Email ?? "", _currentUserRole ?? "", "reporter_rejected", "USER", u.UserId, u.Email, null);
+        await LoadUsers();
+        RefreshManageUserIfOpen();
+        await LoadPendingCounts();
+    }
+
+    private async Task RevokeReporter(UserListDto u)
+    {
+        if (u.RapportoerId == null) return;
+        await ReporterService.RejectAsync(u.RapportoerId.Value);
+        var me = await AuthService.GetCurrentUserAsync();
+        await AuditService.LogAsync(_currentUserId, me?.Email ?? "", _currentUserRole ?? "", "reporter_revoked", "USER", u.UserId, u.Email, null);
+        await LoadUsers();
+        RefreshManageUserIfOpen();
+        await LoadPendingCounts();
+    }
+
+    private async Task LoadAuditLogs()
+    {
+        DateTime? dateFrom = _auditDateFrom?.ToDateTime(TimeOnly.MinValue);
+        DateTime? dateTo = _auditDateTo?.ToDateTime(TimeOnly.MinValue);
+        _auditLoading = true;
+        try
+        {
+            _auditTotalCount = await AuditService.GetLogsCountAsync(
+                string.IsNullOrWhiteSpace(_auditActionType) ? null : _auditActionType.Trim(),
+                string.IsNullOrWhiteSpace(_auditActorFilter) ? null : _auditActorFilter.Trim(),
+                dateFrom,
+                dateTo);
+            var offset = (_auditPage - 1) * AdminPageSize;
+            _auditLogs = (await AuditService.GetLogsAsync(
+                string.IsNullOrWhiteSpace(_auditActionType) ? null : _auditActionType.Trim(),
+                string.IsNullOrWhiteSpace(_auditActorFilter) ? null : _auditActorFilter.Trim(),
+                dateFrom,
+                dateTo,
+                AdminPageSize,
+                offset)).ToList();
+        }
+        finally
+        {
+            _auditLoading = false;
+        }
+    }
+
+    private async Task AuditGoToPage(int page)
+    {
+        if (page < 1) return;
+        _auditPage = page;
+        await LoadAuditLogs();
+    }
+
+    private Task AuditFirstPage() => AuditGoToPage(1);
+    private Task AuditPrevPage() => AuditGoToPage(_auditPage - 1);
+    private Task AuditNextPage() => AuditGoToPage(_auditPage + 1);
+    private async Task AuditLastPage()
+    {
+        var totalPages = (_auditTotalCount + AdminPageSize - 1) / AdminPageSize;
+        if (totalPages < 1) totalPages = 1;
+        await AuditGoToPage(totalPages);
+    }
+
+    private async Task ApplyAuditFilters()
+    {
+        _auditPage = 1;
+        await LoadAuditLogs();
+    }
+
+    private async Task ClearAuditFilters()
+    {
+        _auditActionType = "";
+        _auditActorFilter = null;
+        _auditDateFrom = null;
+        _auditDateTo = null;
+        _auditPage = 1;
+        await LoadAuditLogs();
+    }
+
+    private string GetAuditActionType(string? actionType)
+    {
+        if (string.IsNullOrEmpty(actionType)) return "";
+        var v = Loc["Audit_" + actionType].Value;
+        return string.IsNullOrEmpty(v) ? System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(actionType.Replace("_", " ").ToLowerInvariant()) : v;
+    }
+
+    private void ShowAuditDetail(AuditLogEntryDto log)
+    {
+        _auditDetailLog = log;
+        _showAuditDetailModal = true;
+    }
+
+    private void CloseAuditDetail()
+    {
+        _showAuditDetailModal = false;
+        _auditDetailLog = null;
+    }
+
+    private string FormatAuditDetails(string detailsJson, string actionType, IStringLocalizer<SharedResource> loc)
+    {
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(detailsJson);
+            var sb = new System.Text.StringBuilder();
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                var label = prop.Name switch
+                {
+                    "email" => loc["Admin_Email"].Value,
+                    "old_role" => loc["Audit_OldRole"].Value,
+                    "new_role" => loc["Audit_NewRole"].Value,
+                    "field_changes" => loc["Audit_FieldChanges"].Value,
+                    "role" => loc["Admin_Role"].Value,
+                    _ => System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(prop.Name.Replace("_", " "))
+                };
+                sb.AppendLine($"{label}: {prop.Value}");
+            }
+            return sb.Length > 0 ? sb.ToString().TrimEnd() : detailsJson;
+        }
+        catch { return detailsJson; }
+    }
+}

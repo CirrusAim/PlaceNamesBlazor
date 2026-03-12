@@ -1,0 +1,481 @@
+@page "/{locale:regex(no|en)}/admin/record/create"
+@page "/{locale:regex(no|en)}/admin/record/edit/{Id:int}"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using PlaceNamesBlazor.Contracts.Record
+@using PlaceNamesBlazor.Contracts.Search
+@using PlaceNamesBlazor.Contracts.Subcategory
+@using PlaceNamesBlazor.Contracts.UsagePeriod
+@using PlaceNamesBlazor.Contracts.Dropdowns
+@using PlaceNamesBlazor.Services
+@using PlaceNamesBlazor.Services.Record
+@using PlaceNamesBlazor.Services.Subcategory
+@using PlaceNamesBlazor.Services.UsagePeriod
+@using PlaceNamesBlazor.Services.ImageStorage
+@attribute [Authorize(Policy = "AdminOrSuperuser")]
+@inject IRecordService RecordService
+@inject IStampSearchService StampSearchService
+@inject IDropdownService DropdownService
+@inject ISubcategoryService SubcategoryService
+@inject IImageStorageService ImageStorage
+@inject IUsagePeriodService UsagePeriodService
+@inject NavigationManager Navigation
+@inject ICurrentLocaleService LocaleService
+@inject IStringLocalizer<SharedResource> Loc
+
+<PageTitle>@(IsEdit ? Loc["RecordEdit_Edit"] : Loc["RecordEdit_Create"])</PageTitle>
+
+<h1 class="mb-4">@(IsEdit ? Loc["RecordEdit_Edit"] : Loc["RecordEdit_Create"])</h1>
+
+@if (_loading)
+{
+    <p>@Loc["Common_Loading"]</p>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="alert alert-danger">@_error</div>
+    }
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <div class="row g-2 mb-2">
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Search_Fylke"]</label>
+                    <select class="form-select" @bind="_fylkeId">
+                        <option value="0">@Loc["Common_Select"]</option>
+                        @foreach (var f in _dropdowns.Fylker)
+                        { <option value="@f.FylkeId">@f.FylkeNavn</option> }
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Search_Kommune"]</label>
+                    <input type="text" class="form-control" @bind="_kommune" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Search_Poststed"]</label>
+                    <input type="text" class="form-control" @bind="_poststed" />
+                </div>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-md-6">
+                    <label class="form-label">@Loc["Search_Stempeltype"]</label>
+                    <select class="form-select" value="@_stempeltypeId" @onchange="OnStempeltypeSelectChanged">
+                        <option value="0">@Loc["Common_Select"]</option>
+                        @foreach (var s in _dropdowns.Stempeltyper)
+                        { <option value="@s.StempeltypeId">@s.Hovedstempeltype</option> }
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">@Loc["Record_Subcategory"]</label>
+                    <select class="form-select" @bind="_underkategoriId">
+                        <option value="0">@Loc["Common_None"]</option>
+                        @foreach (var u in _subcategories)
+                        { <option value="@u.UnderkategoriId">@u.Underkategori @(u.UnderkategoriFullTekst != null ? $" – {u.UnderkategoriFullTekst}" : "")</option> }
+                    </select>
+                </div>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-md-6">
+                    <label class="form-label">@Loc["Record_StempeltekstTop"]</label>
+                    <input type="text" class="form-control" @bind="_stempeltekstOppe" maxlength="40" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">@Loc["Record_Engraver"]</label>
+                    <select class="form-select" @bind="_stempelgravoer">
+                        @foreach (var e in _dropdowns.Engravers)
+                        { <option value="@e.Code">@(string.IsNullOrEmpty(e.Code) ? e.Name : $"{e.Code} – {e.Name}")</option> }
+                    </select>
+                </div>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-md-6">
+                    <label class="form-label">@Loc["Record_StempeltekstBottom"]</label>
+                    <input type="text" class="form-control" @bind="_stempeltekstNede" maxlength="20" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">@Loc["Record_StempeltekstMiddle"]</label>
+                    <input type="text" class="form-control" @bind="_stempeltekstMidt" maxlength="20" />
+                </div>
+            </div>
+            <div class="mb-2">
+                <label class="form-label">@Loc["Record_Kommentar"]</label>
+                <input type="text" class="form-control" @bind="_kommentar" maxlength="256" />
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Record_Stempeldiameter"]</label>
+                    <input type="number" step="0.01" class="form-control" @bind="_stempeldiameter" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Record_Bokstavhoeyde"]</label>
+                    <input type="number" step="0.01" class="form-control" @bind="_bokstavhoeyde" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Record_AndreMaal"]</label>
+                    <input type="text" class="form-control" @bind="_andreMaal" maxlength="50" />
+                </div>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Record_Stempelfarge"]</label>
+                    <input type="text" class="form-control" @bind="_stempelfarge" maxlength="30" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Record_Tapsmelding"]</label>
+                    <input type="text" class="form-control" @bind="_tapsmelding" maxlength="30" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Record_Reparasjoner"]</label>
+                    <input type="text" class="form-control" @bind="_reparasjoner" maxlength="50" />
+                </div>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-md-6">
+                    <label class="form-label">@Loc["Record_DatoAvtrykkIPm"]</label>
+                    <input type="text" class="form-control" @bind="_datoAvtrykkIPm" maxlength="40" placeholder="@Loc["Common_PlaceholderDate"]" />
+                </div>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Record_DatoFraGravoer"]</label>
+                    <input type="text" class="form-control" @bind="_datoFraGravoer" placeholder="@Loc["Common_PlaceholderDate"]" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Record_DatoFraIntendantur"]</label>
+                    <input type="text" class="form-control" @bind="_datoFraIntendanturTilOverordnetPostkontor" placeholder="@Loc["Common_PlaceholderDate"]" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">@Loc["Record_DatoFraOverordnet"]</label>
+                    <input type="text" class="form-control" @bind="_datoFraOverordnetPostkontor" placeholder="@Loc["Common_PlaceholderDate"]" />
+                </div>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-md-6">
+                    <label class="form-label">@Loc["Record_DatoForInnlevering"]</label>
+                    <input type="text" class="form-control" @bind="_datoForInnleveringTilOverordnetPostkontor" placeholder="@Loc["Common_PlaceholderDate"]" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">@Loc["Record_DatoInnlevertIntendantur"]</label>
+                    <input type="text" class="form-control" @bind="_datoInnlevertIntendantur" placeholder="@Loc["Common_PlaceholderDate"]" />
+                </div>
+            </div>
+            @if (!IsEdit)
+            {
+                <div class="row g-2 mb-2">
+                    <div class="col-md-4">
+                        <label class="form-label">@Loc["Record_FirstKnown"]</label>
+                        <input type="text" class="form-control" @bind="_forsteKjente" placeholder="@Loc["Common_PlaceholderDate"]" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">@Loc["Record_LastKnown"]</label>
+                        <input type="text" class="form-control" @bind="_sisteKjente" placeholder="@Loc["Common_PlaceholderDate"]" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">@Loc["Record_UsagePeriodComments"]</label>
+                        <input type="text" class="form-control" @bind="_bruksperiodeKommentarer" />
+                    </div>
+                </div>
+            }
+            <div class="mb-2">
+                <label class="form-label">@Loc["RecordEdit_ImageOptional"]</label>
+                <InputFile Accept="image/*" OnChange="OnImageSelected" class="form-control" />
+                @if (!string.IsNullOrEmpty(_bildePath))
+                {
+                    <span class="small text-muted">@Loc["RecordEdit_Current"]: @_bildePath</span>
+                }
+            </div>
+            @if (IsEdit)
+            {
+                <hr />
+                <h6 class="mb-2">@Loc["Record_UsagePeriods"]</h6>
+                <div class="table-responsive mb-2">
+                    <table class="table table-sm table-bordered">
+                        <thead class="table-light"><tr><th>@Loc["Record_FirstKnown"]</th><th>@Loc["Record_LastKnown"]</th><th>@Loc["Record_Kommentarer"]</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var up in _usagePeriods)
+                            {
+                                <tr>
+                                    <td>@(up.DatoFoersteKjenteBruksdato ?? "—")</td>
+                                    <td>@(up.DatoSisteKjenteBruksdato ?? "—")</td>
+                                    <td>@(up.Kommentarer ?? "—")</td>
+                                    <td><button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => DeleteUsagePeriod(up.BruksperiodeId)" disabled="@_usagePeriodSaving">@Loc["Common_Delete"]</button></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="row g-2 mb-2">
+                    <div class="col"><input type="text" class="form-control form-control-sm" @bind="_newPeriodForste" placeholder="@Loc["Record_FirstKnown"]" /></div>
+                    <div class="col"><input type="text" class="form-control form-control-sm" @bind="_newPeriodSiste" placeholder="@Loc["Record_LastKnown"]" /></div>
+                    <div class="col"><input type="text" class="form-control form-control-sm" @bind="_newPeriodKommentarer" placeholder="@Loc["Record_Kommentarer"]" /></div>
+                    <div class="col-auto"><button type="button" class="btn btn-sm btn-success" @onclick="AddUsagePeriod" disabled="@_usagePeriodSaving">@Loc["RecordEdit_AddPeriod"]</button></div>
+                </div>
+            }
+            <div class="mt-3 d-flex gap-2">
+                <button type="button" class="btn btn-primary" @onclick="Save" disabled="@_saving">@(_saving ? Loc["RecordEdit_Saving"] : Loc["RecordEdit_Save"])</button>
+                <a class="btn btn-outline-secondary" href="/@(LocaleService.GetCurrentLocale())/admin/records">@Loc["RecordEdit_Cancel"]</a>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public string Locale { get; set; } = "no";
+
+    [Parameter]
+    public int Id { get; set; }
+
+    private bool IsEdit => Id > 0;
+    private DropdownsDto _dropdowns = new();
+    private string _poststed = "";
+    private string _kommune = "";
+    private int _fylkeId;
+    private int _stempeltypeId;
+    private string _stempeltekstOppe = "";
+    private string? _stempeltekstNede;
+    private string? _stempeltekstMidt;
+    private string? _kommentar;
+    private string? _stempelgravoer;
+    private string? _datoFraGravoer;
+    private string? _datoFraIntendanturTilOverordnetPostkontor;
+    private string? _datoFraOverordnetPostkontor;
+    private string? _datoForInnleveringTilOverordnetPostkontor;
+    private string? _datoInnlevertIntendantur;
+    private string? _tapsmelding;
+    private decimal? _stempeldiameter;
+    private decimal? _bokstavhoeyde;
+    private string? _andreMaal;
+    private string? _stempelfarge;
+    private string? _reparasjoner;
+    private string? _datoAvtrykkIPm;
+    private int _underkategoriId;
+    private List<SubcategoryDto> _subcategories = new();
+    private string? _forsteKjente;
+    private string? _sisteKjente;
+    private string? _bruksperiodeKommentarer;
+    private string? _bildePath;
+    private string? _error;
+    private bool _loading = true;
+    private bool _saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _dropdowns = await DropdownService.GetDropdownsAsync();
+        if (IsEdit)
+        {
+            var record = await StampSearchService.GetByIdAsync(Id);
+            if (record != null)
+            {
+                _poststed = record.PoststedNavn;
+                _kommune = record.KommuneNavn ?? "";
+                _stempeltekstOppe = record.StempeltekstOppe;
+                _stempeltekstNede = record.StempeltekstNede;
+                _stempeltekstMidt = record.StempeltekstMidt;
+                _kommentar = record.Kommentar;
+                _stempelgravoer = record.Stempelgravoer;
+                _datoFraGravoer = record.DatoFraGravoer;
+                _datoFraIntendanturTilOverordnetPostkontor = record.DatoFraIntendanturTilOverordnetPostkontor;
+                _datoFraOverordnetPostkontor = record.DatoFraOverordnetPostkontor;
+                _datoForInnleveringTilOverordnetPostkontor = record.DatoForInnleveringTilOverordnetPostkontor;
+                _datoInnlevertIntendantur = record.DatoInnlevertIntendantur;
+                _tapsmelding = record.Tapsmelding;
+                _stempeldiameter = record.Stempeldiameter;
+                _bokstavhoeyde = record.Bokstavhoeyde;
+                _andreMaal = record.AndreMaal;
+                _stempelfarge = record.Stempelfarge;
+                _reparasjoner = record.Reparasjoner;
+                _datoAvtrykkIPm = record.DatoAvtrykkIPm;
+                _underkategoriId = record.UnderkategoriId ?? 0;
+                var fylke = _dropdowns.Fylker.FirstOrDefault(f => f.FylkeNavn == record.FylkeNavn);
+                if (fylke != null) _fylkeId = fylke.FylkeId;
+                if (record.StempeltypeId.HasValue)
+                    _stempeltypeId = record.StempeltypeId.Value;
+                else
+                {
+                    var st = _dropdowns.Stempeltyper.FirstOrDefault(s => s.StempeltypeFullTekst == record.StempeltypeFullTekst);
+                    if (st != null) _stempeltypeId = st.StempeltypeId;
+                }
+                await LoadSubcategories();
+            }
+            if (IsEdit)
+                await LoadUsagePeriods();
+        }
+        _loading = false;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loading) return;
+        // Reload dropdowns so new stamp types/subcategories are available
+        _dropdowns = await DropdownService.GetDropdownsAsync();
+        if (_stempeltypeId > 0)
+            await LoadSubcategories();
+    }
+
+    private List<UsagePeriodDto> _usagePeriods = new();
+    private string _newPeriodForste = "";
+    private string _newPeriodSiste = "";
+    private string _newPeriodKommentarer = "";
+    private bool _usagePeriodSaving;
+
+    private async Task LoadUsagePeriods()
+    {
+        _usagePeriods = (await UsagePeriodService.GetForStampAsync(Id)).ToList();
+    }
+
+    private async Task AddUsagePeriod()
+    {
+        _usagePeriodSaving = true;
+        try
+        {
+            var (ok, _, err) = await UsagePeriodService.CreateAsync(Id, new UsagePeriodCreateRequest { DatoFoersteKjenteBruksdato = _newPeriodForste.Trim(), DatoSisteKjenteBruksdato = _newPeriodSiste.Trim(), Kommentarer = _newPeriodKommentarer.Trim() });
+            if (ok) { _newPeriodForste = ""; _newPeriodSiste = ""; _newPeriodKommentarer = ""; await LoadUsagePeriods(); } else _error = err;
+        }
+        finally { _usagePeriodSaving = false; }
+    }
+
+    private async Task DeleteUsagePeriod(int bruksperiodeId)
+    {
+        _usagePeriodSaving = true;
+        try
+        {
+            var (ok, err) = await UsagePeriodService.DeleteAsync(bruksperiodeId);
+            if (ok) await LoadUsagePeriods(); else _error = err;
+        }
+        finally { _usagePeriodSaving = false; }
+    }
+
+    private async Task OnStempeltypeSelectChanged(ChangeEventArgs e)
+    {
+        _stempeltypeId = int.TryParse(e.Value?.ToString(), out var id) ? id : 0;
+        await LoadSubcategories();
+    }
+
+    private async Task LoadSubcategories()
+    {
+        if (_stempeltypeId <= 0)
+        {
+            _subcategories = new List<SubcategoryDto>();
+            _underkategoriId = 0;
+            return;
+        }
+        _subcategories = (await SubcategoryService.GetByStempeltypeAsync(_stempeltypeId)).ToList();
+        if (_underkategoriId > 0 && !_subcategories.Any(s => s.UnderkategoriId == _underkategoriId))
+            _underkategoriId = 0;
+    }
+
+    private async Task OnImageSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+        try
+        {
+            await using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            _bildePath = await ImageStorage.UploadAsync(stream, file.Name, "stamp");
+        }
+        catch (Exception ex)
+        {
+            _error = string.Format(Loc["RecordEdit_ImageUploadFailed"].Value, ex.Message);
+        }
+    }
+
+    private async Task Save()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_poststed) || string.IsNullOrWhiteSpace(_kommune))
+        {
+            _error = "Poststed and Kommune are required.";
+            return;
+        }
+        if (_fylkeId <= 0 || _stempeltypeId <= 0)
+        {
+            _error = Loc["RecordEdit_SelectFylkeStempeltype"].Value;
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_stempeltekstOppe))
+            _stempeltekstOppe = _poststed;
+
+        _saving = true;
+        try
+        {
+            if (IsEdit)
+            {
+                var req = new UpdateRecordRequest
+                {
+                    Poststed = _poststed,
+                    Kommune = _kommune,
+                    FylkeId = _fylkeId,
+                    StempeltypeId = _stempeltypeId,
+                    UnderkategoriId = _underkategoriId <= 0 ? null : _underkategoriId,
+                    StempeltekstOppe = _stempeltekstOppe,
+                    StempeltekstNede = _stempeltekstNede,
+                    StempeltekstMidt = _stempeltekstMidt,
+                    Stempelgravoer = _stempelgravoer,
+                    DatoFraGravoer = _datoFraGravoer,
+                    DatoFraIntendanturTilOverordnetPostkontor = _datoFraIntendanturTilOverordnetPostkontor,
+                    DatoFraOverordnetPostkontor = _datoFraOverordnetPostkontor,
+                    DatoForInnleveringTilOverordnetPostkontor = _datoForInnleveringTilOverordnetPostkontor,
+                    DatoInnlevertIntendantur = _datoInnlevertIntendantur,
+                    Tapsmelding = _tapsmelding,
+                    Stempeldiameter = _stempeldiameter,
+                    Bokstavhoeyde = _bokstavhoeyde,
+                    AndreMaal = _andreMaal,
+                    Stempelfarge = _stempelfarge,
+                    Reparasjoner = _reparasjoner,
+                    DatoAvtrykkIPm = _datoAvtrykkIPm,
+                    Kommentar = _kommentar,
+                    BildePath = _bildePath
+                };
+                var (ok, err) = await RecordService.UpdateAsync(Id, req);
+                if (ok)
+                    Navigation.NavigateTo($"/{LocaleService.GetCurrentLocale()}/record/{Id}", forceLoad: false);
+                else
+                    _error = err ?? "Update failed.";
+            }
+            else
+            {
+                var req = new CreateRecordRequest
+                {
+                    Poststed = _poststed,
+                    Kommune = _kommune,
+                    FylkeId = _fylkeId,
+                    StempeltypeId = _stempeltypeId,
+                    UnderkategoriId = _underkategoriId <= 0 ? null : _underkategoriId,
+                    StempeltekstOppe = _stempeltekstOppe,
+                    StempeltekstNede = _stempeltekstNede,
+                    StempeltekstMidt = _stempeltekstMidt,
+                    Stempelgravoer = _stempelgravoer,
+                    DatoFraGravoer = _datoFraGravoer,
+                    DatoFraIntendanturTilOverordnetPostkontor = _datoFraIntendanturTilOverordnetPostkontor,
+                    DatoFraOverordnetPostkontor = _datoFraOverordnetPostkontor,
+                    DatoForInnleveringTilOverordnetPostkontor = _datoForInnleveringTilOverordnetPostkontor,
+                    DatoInnlevertIntendantur = _datoInnlevertIntendantur,
+                    Tapsmelding = _tapsmelding,
+                    Stempeldiameter = _stempeldiameter,
+                    Bokstavhoeyde = _bokstavhoeyde,
+                    AndreMaal = _andreMaal,
+                    Stempelfarge = _stempelfarge,
+                    Reparasjoner = _reparasjoner,
+                    DatoAvtrykkIPm = _datoAvtrykkIPm,
+                    Kommentar = _kommentar,
+                    ForsteKjente = _forsteKjente,
+                    SisteKjente = _sisteKjente,
+                    BruksperiodeKommentarer = _bruksperiodeKommentarer,
+                    BildePath = _bildePath
+                };
+                var (ok, newId, err) = await RecordService.CreateAsync(req);
+                if (ok && newId.HasValue)
+                    Navigation.NavigateTo($"/{LocaleService.GetCurrentLocale()}/record/{newId.Value}", forceLoad: false);
+                else
+                    _error = err ?? Loc["RecordEdit_CreateFailed"].Value;
+            }
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

@@ -1,0 +1,98 @@
+@inherits LayoutComponentBase
+@using PlaceNamesBlazor.Services.Auth
+@using PlaceNamesBlazor.Services.Locale
+@inject IAuthService AuthService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject NavigationManager Navigation
+@inject ICurrentLocaleService LocaleService
+@inject IStringLocalizer<SharedResource> Loc
+
+<div class="layout">
+    <header>
+        <nav class="navbar navbar-expand-lg navbar-dark app-nav">
+            <div class="container">
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#blazor-nav" aria-controls="blazor-nav" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="blazor-nav">
+                    <ul class="navbar-nav me-auto">
+                        <li class="nav-item">
+                            <a class="nav-link" href="@GetPath(_isAdminOrSuperuser ? "admin" : "search")">@Loc["Nav_Home"]</a>
+                        </li>
+                    </ul>
+                    <ul class="navbar-nav align-items-center">
+                        <li class="nav-item me-3">
+                            <span class="navbar-text text-light d-flex align-items-center gap-1">
+                                @if (_currentLocale == "no")
+                                {
+                                    <img src="/images/flag-no.png" alt="Norsk" class="locale-flag locale-flag-active" title="Norsk" />
+                                    <span class="text-white-50">|</span>
+                                    <a href="@GetPathForLocale("en")" class="locale-flag-link" title="English"><img src="/images/flag-en.png" alt="English" class="locale-flag" /></a>
+                                }
+                                else
+                                {
+                                    <a href="@GetPathForLocale("no")" class="locale-flag-link" title="Norsk"><img src="/images/flag-no.png" alt="Norsk" class="locale-flag" /></a>
+                                    <span class="text-white-50">|</span>
+                                    <img src="/images/flag-en.png" alt="English" class="locale-flag locale-flag-active" title="English" />
+                                }
+                            </span>
+                        </li>
+                        @if (_currentUser != null)
+                        {
+                            <li class="nav-item"><a class="nav-link" href="@GetPath("profile")">@Loc["Nav_Profile"]</a></li>
+                            <li class="nav-item"><a class="nav-link" href="@GetPath("Account/Logout")">@Loc["Nav_LogOut"]</a></li>
+                        }
+                        else
+                        {
+                            <li class="nav-item"><a class="nav-link" href="@GetPath("Account/Login")">@Loc["Nav_LogIn"]</a></li>
+                            <li class="nav-item"><a class="nav-link" href="@GetPath("Account/Register")">@Loc["Nav_Register"]</a></li>
+                        }
+                    </ul>
+                </div>
+            </div>
+        </nav>
+    </header>
+    <main class="container my-4">
+        @Body
+    </main>
+    <footer class="app-footer container my-3 text-muted small text-center">
+        <p class="mb-0">@Loc["Footer_AllRightsReserved"]</p>
+    </footer>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    @Loc["Error_Occurred"]
+    <a href="." class="reload">@Loc["Common_Reload"]</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private PlaceNamesBlazor.Contracts.Auth.AuthResultDto? _currentUser;
+    private bool _isAdminOrSuperuser;
+    private string _currentLocale = "no";
+
+    private string GetPath(string relativePath)
+    {
+        var locale = LocaleService.GetCurrentLocale();
+        return $"/{locale}/{relativePath.TrimStart('/')}";
+    }
+
+    private string GetPathForLocale(string targetLocale)
+    {
+        var path = new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/');
+        if (path.StartsWith("/no/", StringComparison.OrdinalIgnoreCase))
+            return "/" + targetLocale + path.Substring(3);
+        if (path.StartsWith("/en/", StringComparison.OrdinalIgnoreCase))
+            return "/" + targetLocale + path.Substring(3);
+        if (path == "/no" || path == "/en")
+            return "/" + targetLocale;
+        return "/" + targetLocale;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _currentLocale = LocaleService.GetCurrentLocale();
+        _currentUser = await AuthService.GetCurrentUserAsync();
+        _isAdminOrSuperuser = _currentUser?.Role is "admin" or "superuser";
+    }
+}

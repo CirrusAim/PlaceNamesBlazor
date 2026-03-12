@@ -1,0 +1,17 @@
+@page "/{locale:regex(no|en)}/register"
+@rendermode InteractiveServer
+@inject NavigationManager Navigation
+
+<PageTitle>Register</PageTitle>
+
+<p>Redirecting to register…</p>
+
+@code {
+    [Parameter]
+    public string Locale { get; set; } = "no";
+
+    protected override void OnInitialized()
+    {
+        Navigation.NavigateTo($"/{Locale}/Account/Register", forceLoad: true);
+    }
+}

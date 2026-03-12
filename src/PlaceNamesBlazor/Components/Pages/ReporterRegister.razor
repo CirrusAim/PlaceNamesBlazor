@@ -1,0 +1,219 @@
+@page "/{locale:regex(no|en)}/reporter-register"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using PlaceNamesBlazor.Contracts.Reporter
+@using PlaceNamesBlazor.Services.Auth
+@using PlaceNamesBlazor.Services.Reporter
+@attribute [Authorize]
+@inject IAuthService AuthService
+@inject IReporterService ReporterService
+@inject NavigationManager Navigation
+@inject ICurrentLocaleService LocaleService
+@inject IStringLocalizer<SharedResource> Loc
+
+<PageTitle>@Loc["ReporterRegister_Title"]</PageTitle>
+
+<h1 class="mb-4">@Loc["ReporterRegister_Title"]</h1>
+
+@if (!_isAuthenticated)
+{
+    <p>Please log in first.</p>
+    return;
+}
+
+@if (_currentUserRole == "admin")
+{
+    <p class="text-muted">Admin users cannot register as reporters.</p>
+    return;
+}
+
+@if (_success)
+{
+    <div class="alert alert-success">Your reporter registration request has been submitted. An administrator will review it.</div>
+    return;
+}
+
+@if (_currentReporter != null)
+{
+    @if (_currentReporter.Status == "approved")
+    {
+        <p class="text-muted">You are already an approved reporter (@_currentReporter.Initialer).</p>
+        <div class="card shadow-sm mt-3" style="max-width: 500px;">
+            <div class="card-header">Edit my reporter info</div>
+            <div class="card-body">
+                <EditForm OnValidSubmit="SaveReporterEdit">
+                    <div class="mb-3">
+                        <label class="form-label">Initialer</label>
+                        <InputText class="form-control" @bind-Value="_editInitialer" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Full name</label>
+                        <InputText class="form-control" @bind-Value="_editFornavnEtternavn" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Email</label>
+                        <InputText type="email" class="form-control" @bind-Value="_editEpost" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Telephone</label>
+                        <InputText class="form-control" @bind-Value="_editTelefon" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Medlemsklubb</label>
+                        <InputText class="form-control" @bind-Value="_editMedlemsklubb" />
+                    </div>
+                    @if (_editError != null) { <div class="alert alert-danger small">@_editError</div> }
+                    <button type="submit" class="btn btn-primary" disabled="@_editLoading">@(_editLoading ? Loc["RecordEdit_Saving"] : Loc["Profile_Save"])</button>
+                </EditForm>
+            </div>
+        </div>
+    }
+    else if (_currentReporter.Status == "pending")
+    {
+        <p class="text-warning">Your reporter registration is pending approval.</p>
+    }
+    else if (_currentReporter.Status == "rejected")
+    {
+        <p class="text-muted mb-2">Your previous registration was rejected. You may re-register below.</p>
+    }
+}
+
+@if (_error != null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+
+@if ((_currentReporter == null || _currentReporter.Status == "rejected") && _currentUserRole != "admin")
+{
+    <div class="card shadow-sm" style="max-width: 500px;">
+        <div class="card-body">
+            <EditForm Model="_request" OnValidSubmit="Submit">
+                <DataAnnotationsValidator />
+                <div class="mb-3">
+                    <label class="form-label">Initialer (required)</label>
+                    <InputText class="form-control" @bind-Value="_request.Initialer" placeholder="e.g. AB" />
+                    <ValidationMessage For="@(() => _request.Initialer)" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Full name</label>
+                    <InputText class="form-control" @bind-Value="_request.FornavnEtternavn" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Email</label>
+                    <InputText type="email" class="form-control" @bind-Value="_request.Epost" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Telephone</label>
+                    <InputText class="form-control" @bind-Value="_request.Telefon" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Medlemsklubb</label>
+                    <InputText class="form-control" @bind-Value="_request.Medlemsklubb" />
+                </div>
+                <button type="submit" class="btn btn-primary" disabled="@_loading">@(_loading ? Loc["Common_Submitting"] : Loc["Report_Submit"])</button>
+            </EditForm>
+        </div>
+    </div>
+}
+
+<p class="mt-3"><a href="/@(LocaleService.GetCurrentLocale())">@Loc["ReporterRegister_Home"]</a></p>
+
+@code {
+    [Parameter]
+    public string Locale { get; set; } = "no";
+
+    private ReporterRegisterRequest _request = new();
+    private bool _isAuthenticated;
+    private string? _currentUserRole;
+    private ReporterDto? _currentReporter;
+    private int _currentUserId;
+    private bool _loading;
+    private bool _success;
+    private string? _error;
+    private string _editInitialer = "";
+    private string _editFornavnEtternavn = "";
+    private string _editEpost = "";
+    private string _editTelefon = "";
+    private string _editMedlemsklubb = "";
+    private bool _editLoading;
+    private string? _editError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = await AuthService.GetCurrentUserAsync();
+        _isAuthenticated = user != null;
+        _currentUserRole = user?.Role;
+        _currentUserId = user?.UserId ?? 0;
+        if (_currentUserId > 0)
+            _currentReporter = await ReporterService.GetByUserIdAsync(_currentUserId);
+        if (_currentReporter != null && _currentReporter.Status == "approved")
+        {
+            _editInitialer = _currentReporter.Initialer;
+            _editFornavnEtternavn = _currentReporter.FornavnEtternavn;
+            _editEpost = _currentReporter.Epost;
+            _editTelefon = _currentReporter.Telefon ?? "";
+            _editMedlemsklubb = _currentReporter.Medlemsklubb ?? "";
+        }
+        if (_currentReporter != null)
+        {
+            _request.Initialer = _currentReporter.Initialer ?? "";
+            _request.FornavnEtternavn = _currentReporter.FornavnEtternavn;
+            _request.Epost = _currentReporter.Epost;
+            _request.Telefon = _currentReporter.Telefon;
+            _request.Medlemsklubb = _currentReporter.Medlemsklubb;
+        }
+        else if (user != null)
+        {
+            _request.Initialer = user.Username ?? "";
+            _request.FornavnEtternavn = user.FullName ?? user.Email ?? "";
+            _request.Epost = user.Email ?? "";
+        }
+    }
+
+    private async Task Submit()
+    {
+        _error = null;
+        _loading = true;
+        try
+        {
+            var id = await ReporterService.RegisterAsync(_currentUserId, _request);
+            if (id.HasValue) _success = true;
+            else _error = Loc["ReporterRegister_RegistrationFailed"].Value;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SaveReporterEdit()
+    {
+        if (_currentReporter == null || _currentReporter.Status != "approved") return;
+        _editError = null;
+        _editLoading = true;
+        try
+        {
+            var ok = await ReporterService.UpdateAsync(
+                _currentReporter.RapportoerId,
+                _editInitialer?.Trim(),
+                _editFornavnEtternavn?.Trim(),
+                _editEpost?.Trim(),
+                string.IsNullOrWhiteSpace(_editTelefon) ? null : _editTelefon.Trim(),
+                string.IsNullOrWhiteSpace(_editMedlemsklubb) ? null : _editMedlemsklubb.Trim());
+            if (ok)
+            {
+                _currentReporter = await ReporterService.GetByUserIdAsync(_currentUserId);
+                if (_currentReporter != null)
+                {
+                    _editInitialer = _currentReporter.Initialer;
+                    _editFornavnEtternavn = _currentReporter.FornavnEtternavn;
+                    _editEpost = _currentReporter.Epost;
+                    _editTelefon = _currentReporter.Telefon ?? "";
+                    _editMedlemsklubb = _currentReporter.Medlemsklubb ?? "";
+                }
+            }
+            else _editError = Loc["ReporterRegister_UpdateFailedHint"].Value;
+        }
+        finally { _editLoading = false; }
+    }
+}
