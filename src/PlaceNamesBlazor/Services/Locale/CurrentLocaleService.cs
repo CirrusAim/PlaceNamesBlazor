@@ -20,20 +20,29 @@ public class CurrentLocaleService : ICurrentLocaleService
 
     public string GetCurrentLocale()
     {
-        // Prefer NavigationManager so locale stays correct after client-side navigation (HttpContext is null in circuit).
-        var path = new Uri(_navigationManager.Uri).AbsolutePath.TrimStart('/');
-        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length > 0 &&
-            (string.Equals(segments[0], "no", StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(segments[0], "en", StringComparison.OrdinalIgnoreCase)))
-            return segments[0].ToLowerInvariant();
-
+        // Use HttpContext first so Razor Pages (Login, Register) work — NavigationManager is not initialized there.
         var requestPath = _httpContextAccessor.HttpContext?.Request.Path.Value ?? "";
-        var requestSegments = requestPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var requestSegments = requestPath.TrimStart('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (requestSegments.Length > 0 &&
             (string.Equals(requestSegments[0], "no", StringComparison.OrdinalIgnoreCase) ||
              string.Equals(requestSegments[0], "en", StringComparison.OrdinalIgnoreCase)))
             return requestSegments[0].ToLowerInvariant();
+
+        // Blazor circuit: NavigationManager is available and reflects client-side URL.
+        try
+        {
+            var path = new Uri(_navigationManager.Uri).AbsolutePath.TrimStart('/');
+            var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length > 0 &&
+                (string.Equals(segments[0], "no", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(segments[0], "en", StringComparison.OrdinalIgnoreCase)))
+                return segments[0].ToLowerInvariant();
+        }
+        catch (InvalidOperationException)
+        {
+            // RemoteNavigationManager not initialized (e.g. Razor Page context); already used path above.
+        }
+
         return "no";
     }
 }

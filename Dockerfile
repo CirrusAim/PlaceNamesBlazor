@@ -13,6 +13,10 @@ RUN dotnet publish -c Release -o /app/publish --no-restore
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
+
+# Npgsql may load GSSAPI for PostgreSQL auth; install so libgssapi_krb5.so.2 is available
+RUN apt-get update && apt-get install -y --no-install-recommends libgssapi-krb5-2 && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app/publish .
 
 # Render sets PORT at runtime; entrypoint script substitutes it into ASPNETCORE_URLS
