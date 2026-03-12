@@ -16,7 +16,11 @@ public class CloudflareR2ImageStorageService : IImageStorageService
         var accessKey = configuration["ImageStorage:Cloudflare:AccessKeyId"] ?? "";
         var secretKey = configuration["ImageStorage:Cloudflare:SecretAccessKey"] ?? "";
         _bucketName = configuration["ImageStorage:Cloudflare:BucketName"] ?? "place-names-images";
-        _publicBaseUrl = (configuration["ImageStorage:Cloudflare:PublicBaseUrl"] ?? "").TrimEnd('/');
+        // PublicBaseUrl is the R2 public bucket URL; also accept PublicUrl (e.g. Render env ImageStorage__Cloudflare__PublicUrl)
+        var baseUrl = configuration["ImageStorage:Cloudflare:PublicBaseUrl"]
+            ?? configuration["ImageStorage:Cloudflare:PublicUrl"]
+            ?? "";
+        _publicBaseUrl = baseUrl.TrimEnd('/');
 
         var endpoint = string.IsNullOrEmpty(accountId)
             ? null
