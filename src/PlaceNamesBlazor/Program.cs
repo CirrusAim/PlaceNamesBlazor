@@ -122,15 +122,7 @@ builder.Services.AddScoped<ICurrentLocaleService, CurrentLocaleService>();
 
 var app = builder.Build();
 
-if (!app.Environment.IsDevelopment())
-{
-    app.UseExceptionHandler("/no/Error", createScopeForErrors: true);
-    app.UseHsts();
-}
-app.UseStatusCodePagesWithReExecute("/no/not-found", createScopeForStatusCodePages: true);
-app.UseHttpsRedirection();
-
-// Rewrite /framework/* to /_framework/* (fixes 404 when something requests path without leading underscore, e.g. old Assets resolution or proxy)
+// First: rewrite /framework/* to /_framework/* so Blazor script loads (fixes 404 when HTML or proxy uses path without leading underscore)
 app.Use(async (context, next) =>
 {
     var path = context.Request.Path.Value ?? "";
@@ -140,6 +132,14 @@ app.Use(async (context, next) =>
     }
     await next(context);
 });
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/no/Error", createScopeForErrors: true);
+    app.UseHsts();
+}
+app.UseStatusCodePagesWithReExecute("/no/not-found", createScopeForStatusCodePages: true);
+app.UseHttpsRedirection();
 
 // Route-based locale: redirect root to default locale
 app.Use(async (context, next) =>
