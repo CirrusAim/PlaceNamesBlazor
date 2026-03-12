@@ -60,18 +60,25 @@ public class CloudflareR2ImageStorageService : IImageStorageService
     {
         if (string.IsNullOrWhiteSpace(storedIdentifier))
             return string.Empty;
+        // R2 keys are "stamp/guid.jpg" (no "images/" prefix). DB may have "images/stamp/..." from local storage; normalize so URL matches R2.
+        var key = storedIdentifier.TrimStart('/').Replace('\\', '/');
+        if (key.StartsWith("images/", StringComparison.OrdinalIgnoreCase))
+            key = key.Substring("images/".Length);
         return string.IsNullOrEmpty(_publicBaseUrl)
-            ? storedIdentifier
-            : _publicBaseUrl + "/" + storedIdentifier.TrimStart('/');
+            ? key
+            : _publicBaseUrl + "/" + key;
     }
 
     public async Task DeleteAsync(string storedIdentifier, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(storedIdentifier))
             return;
+        var key = storedIdentifier.Trim().Replace('\\', '/');
+        if (key.StartsWith("images/", StringComparison.OrdinalIgnoreCase))
+            key = key.Substring("images/".Length);
         try
         {
-            await _s3.DeleteObjectAsync(_bucketName, storedIdentifier.Trim(), cancellationToken);
+            await _s3.DeleteObjectAsync(_bucketName, key, cancellationToken);
         }
         catch { /* ignore delete failure */ }
     }
