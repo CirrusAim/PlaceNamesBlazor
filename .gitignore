@@ -1,15 +1,38 @@
 # Build results
 [Dd]ebug/
 [Rr]elease/
-bin/
-obj/
 [Bb]in/
 [Oo]bj/
+artifacts/
 
-# User-specific (secrets, IDE) — do not commit real config
+# Real secrets / local config — keep on this machine, never push
 **/appsettings.json
 **/appsettings.Development.json
+.env
+.env.*
+!.env.example
+secrets.json
+
+# Placeholder config (no secrets) — these are the copies that go to the remote
+!**/appsettings.Example.json
+!**/appsettings.Development.Example.json
+
+# Local-only tooling and generated samples
+PlaceNamesBlazor.sln
+PUSH_BLAZOR_TO_SEPARATE_GITHUB_REPO.md
+create_sample_excel.py
+SampleBatchImport.xlsx
+*.xlsx
+
+# Local uploaded images (flag assets stay tracked)
+src/PlaceNamesBlazor/wwwroot/images/stamp/*
+src/PlaceNamesBlazor/wwwroot/images/report/*
+!src/PlaceNamesBlazor/wwwroot/images/stamp/.gitkeep
+!src/PlaceNamesBlazor/wwwroot/images/report/.gitkeep
+
+# User-specific / IDE
 *.user
+*.userprefs
 .vs/
 .idea/
 .vscode/
@@ -19,18 +42,10 @@ obj/
 *.pdb
 *.cache
 *.log
-*.userprefs
 project.lock.json
 project.fragment.lock.json
-artifacts/
 
-# Keep example config (no secrets)
-!**/appsettings.Example.json
-!**/appsettings.Development.Example.json
-
-# OS
+# OS / OneDrive
 .DS_Store
 Thumbs.db
-
-# OneDrive
 ~$*
