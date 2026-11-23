@@ -1,4 +1,8 @@
-"""Create sample batch import Excel (sheet 'Fields') with 5 rows. Run: python create_sample_excel.py"""
+"""Create sample batch import Excel (sheet 'Fields') with 5 rows.
+
+Copy this file to create_sample_excel.py, set YOUR_IMAGE_PATH, then run:
+    python create_sample_excel.py
+"""
 try:
     from openpyxl import Workbook
 except ImportError:
@@ -11,7 +15,6 @@ wb = Workbook()
 ws = wb.active
 ws.title = "Fields"
 
-# Headers (required + optional batch fields; optional columns can be omitted in Excel and import still works)
 headers = [
     "Fylke", "Stempletype", "Poststed", "Kommune", "Stempeltekst", "Første kjente", "Siste kjente", "Kommentar", "Bilde",
     "Stempeldiameter", "Bokstavhøyde", "Andre mål", "Stempelfarge", "Tapsmelding", "Reparasjoner", "Dato avtrykk i PM",
@@ -20,11 +23,7 @@ headers = [
 for c, h in enumerate(headers, 1):
     ws.cell(row=1, column=c, value=h)
 
-# 5 sample rows with full data for every field (Fylke/Stempletype match full_schema.sql seeds)
-bilde_path = r"C:\Users\cirru\Downloads\wiVRVa42.jpg"
-# Columns: Fylke, Stempletype, Poststed, Kommune, Stempeltekst, Første kjente, Siste kjente, Kommentar, Bilde,
-#          Stempeldiameter, Bokstavhøyde, Andre mål, Stempelfarge, Tapsmelding, Reparasjoner, Dato avtrykk i PM,
-#          Dato fra gravør, Dato fra intendantur, Dato fra overordnet, Dato for innlevering, Dato innlevert intendantur
+bilde_path = r"YOUR_IMAGE_PATH"
 rows = [
     [
         "Akershus", "I", "Ski", "Nordre Follo", "Ski",
